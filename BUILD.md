@@ -25,13 +25,13 @@ Check the ⓘ title-bar menu visually, playback and Now Playing controls, and re
 
 The release Mac needs a Developer ID Application certificate, a saved `notarytool` Keychain profile, and the existing Sparkle signing key. This project's profile is `music-notary`; the Sparkle key uses account `com.dyan.ytmusicwebkit`. Its public key is committed in `Music/Info.plist`; the private key remains in Keychain. When moving to another Mac, securely transfer the existing signing key instead of generating a replacement.
 
-Keep `MARKETING_VERSION` as the user-facing version. Increase `CURRENT_PROJECT_VERSION` for every new distributed build, including rebuilds that keep the same displayed version. Music 1.1.0 with the updater is build 5. Sparkle compares build numbers.
+Keep `MARKETING_VERSION` as the user-facing version. Increase `CURRENT_PROJECT_VERSION` for every new distributed build, including rebuilds that keep the same displayed version. Music 1.1.0 with the corrected release packaging is build 6. Sparkle compares build numbers.
 
 ```sh
-bash scripts/release.sh music-notary
+bash scripts/release.sh music-notary music-1.1.0
 ```
 
-The script archives and exports separate Apple Silicon and Intel apps with hardened runtime and Developer ID signing, including Sparkle's helper executables. It creates and signs the DMGs, submits both to Apple, waits for acceptance, staples their tickets, and verifies the signatures and Gatekeeper assessment. Finally, it signs the finished DMGs for Sparkle and generates architecture-specific feeds and SHA-256 checksums.
+The script archives and exports separate Apple Silicon and Intel apps with hardened runtime and Developer ID signing, including Sparkle's helper executables. It restores the original 640 × 360 Finder installer window, background, and left-to-right Music → Applications icon layout, then creates and signs the DMGs, submits both to Apple, waits for acceptance, staples their tickets, and verifies the signatures and Gatekeeper assessment. Finally, it signs the finished DMGs for Sparkle and generates architecture-specific feeds and SHA-256 checksums.
 
 It prints a new `dist/release.<random>/upload/` directory containing:
 
@@ -45,10 +45,18 @@ The DMG filenames follow `MARKETING_VERSION`. Each run gets a separate directory
 
 ## Publish to GitHub Releases
 
-Push the source commit, then create a stable GitHub Release with tag `v1.1.0` pointing to that commit. Upload **all five files** from the new `upload/` directory and mark the release as latest. A source push alone does not publish the update packages or feeds. Do not reuse the old build-4 DMGs from the root of `dist/`.
+Push the source commit, then edit the existing stable GitHub Release with tag `music-1.1.0`. Replace its two old DMGs with the new packages, and add both XML feeds and the checksum file. For a new version, create a release whose tag matches the second argument supplied to the release script. Upload **all five files** from the new `upload/` directory and mark the release as latest. A source push alone does not publish the update packages or feeds. Use only the five files from the new upload folder; old DMGs and feeds from earlier builds do not match these signatures.
 
-Music reads `releases/latest/download/appcast-arm64.xml` or `appcast-x86_64.xml`. Each feed points to the matching signed DMG under `releases/download/v1.1.0/`. Until the first release containing these feeds is published, update checks report that they could not complete.
+Music reads `releases/latest/download/appcast-arm64.xml` or `appcast-x86_64.xml`. Each feed points to the matching signed DMG under `releases/download/music-1.1.0/`. Until the first release containing these feeds is published, update checks report that they could not complete.
 
-For later releases, increase the build number, run the same release script, and publish its five output files with the matching version tag. Do not modify a finished DMG after feed generation: its signature and checksum cover those exact bytes.
+The release script defaults to tag `music-<marketing-version>`; its second argument can specify a different tag. For later releases, increase the build number, run the script with the intended tag, and publish its five output files together. Do not modify a finished DMG after feed generation: its signature and checksum cover those exact bytes.
+
+After uploading, verify the public files and links with:
+
+```sh
+python3 tests/check-release.py --published music-1.1.0
+```
+
+This check also runs against the local upload folder before the release script reports success. It catches missing feeds, mismatched tags, incorrect package sizes, and mismatched checksums. `PUBLISH.txt` beside the upload folder records the exact release URL and publication steps.
 
 Update checks run at launch and on Sparkle's normal background schedule. The automatic-check preference persists, and manual checks remain available when it is disabled. Background checks only mark the title-bar icon; downloading, installation, and restarting require user interaction.

@@ -11,6 +11,8 @@ work=$(mktemp -d "$PWD/dist/release.XXXXXX")
 release="$work/upload"
 mkdir "$release"
 printf 'Release workspace: %s\n' "$work"
+mounted=""
+trap 'if [ -n "$mounted" ]; then hdiutil detach "$mounted" -quiet || true; fi' EXIT
 
 cat > "$work/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,10 +40,21 @@ for arch in arm64 x86_64; do
     ditto "$work/export-$arch/Music.app" "$stage/Music.app"
     codesign --verify --deep --strict "$stage/Music.app"
     version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Music.app/Contents/Info.plist")
+    release_tag="${2:-music-$version}"
     ln -s /Applications "$stage/Applications"
+    mkdir "$stage/.background"
+    cp packaging/dmg-background.png "$stage/.background/background.png"
     if [ "$arch" = arm64 ]; then label=Apple-Silicon; else label=Intel; fi
     dmg="$release/Music-$version-$label.dmg"
-    hdiutil create -quiet -volname Music -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+    hdiutil create -quiet -volname "Music $version $label" -srcfolder "$stage" -fs HFS+ -format UDRW "$work/layout-$arch.dmg"
+    mounted="$work/mount-$arch"
+    mkdir "$mounted"
+    hdiutil attach "$work/layout-$arch.dmg" -nobrowse -mountpoint "$mounted" -quiet
+    osascript scripts/layout-dmg.applescript "$mounted"
+    test -s "$mounted/.DS_Store"
+    hdiutil detach "$mounted" -quiet
+    mounted=""
+    hdiutil convert "$work/layout-$arch.dmg" -format UDZO -o "$dmg" -quiet
     codesign --sign "$identity" --timestamp "$dmg"
     xcrun notarytool submit "$dmg" --keychain-profile "$profile" --output-format json > "$work/submission-$arch.json"
     printf 'Submitted %s for notarization\n' "$label"
@@ -63,9 +76,17 @@ for arch in arm64 x86_64; do
     mkdir "$work/feed-$arch"
     ln "$dmg" "$work/feed-$arch/$(basename "$dmg")"
     "$sparkle/generate_appcast" --account com.dyan.ytmusicwebkit --maximum-deltas 0 \
-        --download-url-prefix "$repo/releases/download/v$version/" \
-        --link "$repo/releases/tag/v$version" \
+        --download-url-prefix "$repo/releases/download/$release_tag/" \
+        --link "$repo/releases/tag/$release_tag" \
         -o "$release/appcast-$arch.xml" "$work/feed-$arch"
 done
 (cd "$release" && shasum -a 256 ./*.dmg ./appcast-*.xml > SHA256SUMS.txt)
+python3 tests/check-release.py "$release" "$release_tag"
+cat > "$work/PUBLISH.txt" <<TEXT
+GitHub release: $repo/releases/tag/$release_tag
+Upload all five files from: $release
+For an existing release, replace both DMGs and any previous feeds/checksums.
+Keep this release marked Latest. The XML files are required for update checks.
+After publishing: python3 tests/check-release.py --published $release_tag
+TEXT
 printf '\nVerified release files ready to upload: %s\n' "$release"
