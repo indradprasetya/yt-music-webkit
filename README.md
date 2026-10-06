@@ -35,24 +35,3 @@ Third-party components retain their own licenses. [THIRD_PARTY_NOTICES.txt](THIR
 
 Music is not affiliated with or endorsed by Google or YouTube. YouTube Music, its branding, and the content accessed through the service are not covered by this project's license and remain subject to their respective owners' rights and the [YouTube Terms of Service](https://www.youtube.com/static?template=terms).
 
-## Build and release
-
-Open `Music.xcodeproj` in Xcode for development. Direct Xcode builds use `0.0.0` (build `0`); release builds get their versions from Git, without editing the project file.
-
-Use a full Git clone with all release tags (`git fetch origin --tags`). Commit the release changes, then create a tag and run the release script. For example:
-
-```sh
-git tag -a v1.1.1 -m "Music 1.1.1"
-bash scripts/release.sh --version
-bash scripts/release.sh
-```
-
-Use `vX.Y.Z` release tags: `v1.1.1` sets the app version to `1.1.1` (legacy `X.Y.Z` and `music-X.Y.Z` tags are also recognized). The number of commits reachable from the tagged commit sets the build number, shared by Apple Silicon and Intel. The script requires a clean working tree and rejects versions or build numbers that do not increase over other local release tags. Keep release history intact; rebuilding the same tag keeps the same build number.
-
-Releases require Xcode, a Developer ID Application certificate, notarization credentials in the `music-notary` Keychain profile, and the Sparkle signing key for `com.dyan.ytmusicwebkit`. To select another profile or an explicit tag, use `bash scripts/release.sh <profile> <tag>`.
-
-The script builds, signs, notarizes, and verifies both DMGs, then writes appcasts with their signatures and checksums to `updates/`. Apps distributed from `v1.1.0` read these feeds through GitHub Raw; no GitHub Actions or Pages deployment is needed. Earlier beta builds must be replaced manually.
-
-Push the release tag and create a draft release. Upload only the two files from the printed upload folder: `Music-X.Y.Z-Apple-Silicon.dmg` and `Music-X.Y.Z-Intel.dmg`, with the version supplied by the script. Keep the generated filenames so the appcast URLs remain valid. Publish the release and mark it Latest, then immediately commit and push the generated `updates/` files to `main`. Publish the DMGs before updating the repository feeds so the download URLs are available when clients discover the update.
-
-The XML feeds and `updates/SHA256SUMS.txt` stay in the repository; do not upload them as release assets. The downloads badge counts all release assets across releases, so versioned DMG filenames are supported.
