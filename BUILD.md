@@ -1,87 +1,54 @@
 # Build
 
-Build Music on macOS using Swift and the system AppKit and WebKit frameworks. No third-party dependencies are required.
+Music uses Swift, AppKit, WebKit, and Sparkle 2.10.0. Install Xcode 16 or newer in `/Applications/Xcode.app` and open it once to finish setup.
 
-## Requirements
+## Development and checks
 
-Install Xcode 16 or newer in `/Applications/Xcode.app` and open it once to finish setup. Use its toolchain for terminal commands:
+Open `Music.xcodeproj`, select the Music scheme and My Mac, then run. Debug builds use ad-hoc signing; Xcode downloads the pinned Sparkle package automatically.
+
+From the repository root:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-```
-
-Clone the repository and run the remaining commands from its root directory:
-
-```sh
-git clone https://github.com/indradprasetya/yt-music-webkit.git
-cd yt-music-webkit
-xcodebuild -version
-```
-
-If you already have a checkout, use that directory instead of cloning again.
-
-## Build and run in Xcode
-
-Open `Music.xcodeproj`, select the **Music** scheme and **My Mac**, then press **Command-R**. Open the project file rather than the repository folder. Source code, `Info.plist`, and the icon live in `Music/`.
-
-The project uses AppKit and WebKit, supports macOS 12 or newer, and signs locally without an Apple Developer team. App version, build number, and bundle identifier are configured on the Music target in Xcode.
-
-To build a development app from Terminal:
-
-```sh
 xcodebuild -project Music.xcodeproj -scheme Music \
     -configuration Debug -destination 'platform=macOS' \
-    -derivedDataPath dist/DerivedData build
-open dist/DerivedData/Build/Products/Debug/Music.app
+    -derivedDataPath dist/updater-build build
+python3 tests/check-updates.py
+open dist/updater-build/Build/Products/Debug/Music.app
 ```
 
-## Build release apps and DMGs
+The check uses a temporary app and local HTTP server to exercise Sparkle: current build, newer build with the same display version, invalid feed, offline server, and persisted automatic-check settings. It verifies that disabling automatic checks makes no network requests.
 
-Run this entire block from the repository root, in the same terminal session. It builds separate Apple Silicon and Intel apps through the Xcode project and packages each with an Applications shortcut for drag-and-drop installation.
+Check the ⓘ title-bar menu visually, playback and Now Playing controls, and reopening the window after closing it. The app continues running until Command-Q.
+
+## Signed, notarized releases
+
+The release Mac needs a Developer ID Application certificate, a saved `notarytool` Keychain profile, and the existing Sparkle signing key. This project's profile is `music-notary`; the Sparkle key uses account `com.dyan.ytmusicwebkit`. Its public key is committed in `Music/Info.plist`; the private key remains in Keychain. When moving to another Mac, securely transfer the existing signing key instead of generating a replacement.
+
+Keep `MARKETING_VERSION` as the user-facing version. Increase `CURRENT_PROJECT_VERSION` for every new distributed build, including rebuilds that keep the same displayed version. Music 1.1.0 with the updater is build 5. Sparkle compares build numbers.
 
 ```sh
-bash <<'BUILD'
-set -euo pipefail
-
-mkdir -p dist
-build_dir=$(mktemp -d "$PWD/dist/build.XXXXXX")
-
-for arch in arm64 x86_64; do
-    if [ "$arch" = arm64 ]; then
-        label=Apple-Silicon
-    else
-        label=Intel
-    fi
-
-    xcodebuild -project Music.xcodeproj -scheme Music \
-        -configuration Release -destination 'generic/platform=macOS' \
-        -derivedDataPath "$build_dir/$arch" \
-        ARCHS="$arch" ONLY_ACTIVE_ARCH=NO build
-
-    stage="$build_dir/stage-$arch"
-    app="$stage/Music.app"
-    mkdir -p "$stage"
-    ditto "$build_dir/$arch/Build/Products/Release/Music.app" "$app"
-    codesign --verify --strict --verbose=2 "$app"
-    version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
-    ln -s /Applications "$stage/Applications"
-
-    dmg="dist/Music-${version}-${label}.dmg"
-    hdiutil create -volname Music -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
-    hdiutil verify "$dmg"
-done
-BUILD
+bash scripts/release.sh music-notary
 ```
 
-The output filenames use the version from the built app:
+The script archives and exports separate Apple Silicon and Intel apps with hardened runtime and Developer ID signing, including Sparkle's helper executables. It creates and signs the DMGs, submits both to Apple, waits for acceptance, staples their tickets, and verifies the signatures and Gatekeeper assessment. Finally, it signs the finished DMGs for Sparkle and generates architecture-specific feeds and SHA-256 checksums.
 
-- `dist/Music-<version>-Apple-Silicon.dmg`
-- `dist/Music-<version>-Intel.dmg`
+It prints a new `dist/release.<random>/upload/` directory containing:
 
-Intermediate builds and staged app bundles remain under `dist/build.<random>/`. The entire `dist/` directory is already ignored by Git. Existing DMGs are not overwritten: move or delete the previous output files before rebuilding the same version.
+- `Music-1.1.0-Apple-Silicon.dmg`
+- `Music-1.1.0-Intel.dmg`
+- `appcast-arm64.xml`
+- `appcast-x86_64.xml`
+- `SHA256SUMS.txt`
 
-The apps use ad-hoc signing for local builds, without Developer ID signing or Apple notarization.
+The DMG filenames follow `MARKETING_VERSION`. Each run gets a separate directory so previous notarized packages are preserved. Logs, submissions, and staged apps remain in the parent release directory. `dist/` is ignored by Git. The script defaults to developer team `B48JYPPTK6`; `MUSIC_TEAM_ID` can select another team for a separate distribution.
 
-## Run
+## Publish to GitHub Releases
 
-Open the DMG matching your Mac, drag `Music.app` into Applications, and launch it. Check playback and macOS Now Playing controls. Closing the window keeps playback running; click the Dock icon to reopen it, or press Command-Q to quit.
+Push the source commit, then create a stable GitHub Release with tag `v1.1.0` pointing to that commit. Upload **all five files** from the new `upload/` directory and mark the release as latest. A source push alone does not publish the update packages or feeds. Do not reuse the old build-4 DMGs from the root of `dist/`.
+
+Music reads `releases/latest/download/appcast-arm64.xml` or `appcast-x86_64.xml`. Each feed points to the matching signed DMG under `releases/download/v1.1.0/`. Until the first release containing these feeds is published, update checks report that they could not complete.
+
+For later releases, increase the build number, run the same release script, and publish its five output files with the matching version tag. Do not modify a finished DMG after feed generation: its signature and checksum cover those exact bytes.
+
+Update checks run at launch and on Sparkle's normal background schedule. The automatic-check preference persists, and manual checks remain available when it is disabled. Background checks only mark the title-bar icon; downloading, installation, and restarting require user interaction.

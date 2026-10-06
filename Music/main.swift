@@ -4,6 +4,7 @@ import WebKit
 final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
+    private var updates: MusicUpdates!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
@@ -45,6 +46,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.center()
         window.contentView = webView
         window.delegate = self
+        updates = MusicUpdates()
+        updates.attach(to: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
