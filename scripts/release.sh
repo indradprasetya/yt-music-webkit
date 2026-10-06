@@ -94,10 +94,15 @@ for arch in arm64 x86_64; do
     mkdir "$mounted"
     hdiutil attach "$work/layout-$arch.dmg" -nobrowse -mountpoint "$mounted" -quiet
     osascript scripts/layout-dmg.applescript "$mounted"
-    test -s "$mounted/.DS_Store"
+    python3 tests/check-dmg-layout.py "$mounted"
     hdiutil detach "$mounted" -quiet
     mounted=""
     hdiutil convert "$work/layout-$arch.dmg" -format UDZO -o "$dmg" -quiet
+    mounted="$work/mount-$arch"
+    hdiutil attach "$dmg" -nobrowse -mountpoint "$mounted" -quiet
+    python3 tests/check-dmg-layout.py "$mounted"
+    hdiutil detach "$mounted" -quiet
+    mounted=""
     codesign --sign "$identity" --timestamp "$dmg"
     xcrun notarytool submit "$dmg" --keychain-profile "$profile" --output-format json > "$work/submission-$arch.json"
     printf 'Submitted %s for notarization\n' "$label"
