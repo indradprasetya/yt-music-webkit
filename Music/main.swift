@@ -10,23 +10,14 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        // macOS prefers interval skipping when YouTube registers both kinds of controls.
+        // Never advertise interval skipping: Now Playing can cache those initial controls.
         configuration.userContentController.addUserScript(WKUserScript(source: """
         if (location.hostname === 'music.youtube.com' && navigator.mediaSession) {
-            const setActionHandler = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
-            let update;
-            const preferTrackControls = () => {
-                clearTimeout(update);
-                update = setTimeout(() => {
-                    setActionHandler('seekbackward', null);
-                    setActionHandler('seekforward', null);
-                }, 0);
+            // Keep the hook on the prototype, even if WebKit recreates the session wrapper.
+            const setActionHandler = MediaSession.prototype.setActionHandler;
+            MediaSession.prototype.setActionHandler = function(action, handler) {
+                setActionHandler.call(this, action, action === 'seekbackward' || action === 'seekforward' ? null : handler);
             };
-            navigator.mediaSession.setActionHandler = (action, handler) => {
-                setActionHandler(action, handler);
-                if (action === 'seekbackward' || action === 'seekforward') preferTrackControls();
-            };
-            document.addEventListener('playing', preferTrackControls, true);
         }
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webView = WKWebView(frame: .zero, configuration: configuration)
