@@ -86,7 +86,7 @@ for arch in arm64 x86_64; do
     mkdir "$stage/.background"
     cp packaging/dmg-background.png "$stage/.background/background.png"
     if [ "$arch" = arm64 ]; then label=Apple-Silicon; else label=Intel; fi
-    dmg="$release/Music-$label.dmg"
+    dmg="$release/Download-Music-$label.dmg"
     hdiutil create -quiet -volname "Music $version $label" -srcfolder "$stage" -fs HFS+ -format UDRW "$work/layout-$arch.dmg"
     mounted="$work/mount-$arch"
     mkdir "$mounted"
@@ -104,7 +104,7 @@ done
 sparkle="$PWD/dist/updater-build/SourcePackages/artifacts/sparkle/Sparkle/bin"
 for arch in arm64 x86_64; do
     if [ "$arch" = arm64 ]; then label=Apple-Silicon; else label=Intel; fi
-    dmg="$release/Music-$label.dmg"
+    dmg="$release/Download-Music-$label.dmg"
     submission=$(plutil -extract id raw "$work/submission-$arch.json")
     xcrun notarytool wait "$submission" --keychain-profile "$profile" --timeout 1h --output-format json > "$work/status-$arch.json"
     xcrun notarytool log "$submission" --keychain-profile "$profile" "$work/notary-log-$arch.json"
@@ -128,8 +128,8 @@ python3 tests/check-release.py "$release" "$release_tag"
 cat > "$work/PUBLISH.txt" <<TEXT
 GitHub release: $repo/releases/tag/$release_tag
 Upload these four files from $release to a draft release:
-  Music-Apple-Silicon.dmg
-  Music-Intel.dmg
+  Download-Music-Apple-Silicon.dmg
+  Download-Music-Intel.dmg
   appcast-arm64.xml
   appcast-x86_64.xml
 Keep the DMG names unchanged: the download badges count these exact names.

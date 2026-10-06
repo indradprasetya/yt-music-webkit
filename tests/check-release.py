@@ -36,7 +36,7 @@ for arch, label in [("arm64", "Apple-Silicon"), ("x86_64", "Intel")]:
     assert item is not None, f"Missing update in {feed_name}"
     version = item.findtext(f"{{{namespace}}}shortVersionString")
     assert version == tag.removeprefix("music-"), f"Wrong version in {feed_name}"
-    filename = f"Music-{label}.dmg"
+    filename = f"Download-Music-{label}.dmg"
     enclosure = item.find("enclosure")
     assert enclosure is not None and enclosure.get("url") == f"{repo}/releases/download/{tag}/{filename}", f"Wrong release tag or package in {feed_name}"
     assert enclosure.get(f"{{{namespace}}}edSignature"), f"Missing signature in {feed_name}"
