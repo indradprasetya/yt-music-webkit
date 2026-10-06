@@ -1,7 +1,11 @@
 # Music
 
 [![Version](https://img.shields.io/github/v/release/indradprasetya/yt-music-webkit?style=for-the-badge&color=0088cc&label=version&sort=date)](https://github.com/indradprasetya/yt-music-webkit/releases)
-[![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11)](https://github.com/indradprasetya/yt-music-webkit/releases)
+[![Downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Findradprasetya%2Fyt-music-webkit%2Fdownload-badge%2Fdownloads.json&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
+
+<!-- Download badge: counts only .dmg assets across published releases, including prereleases.
+     The Download badge workflow refreshes it hourly and on release changes; workflow_dispatch refreshes it manually.
+     Generated data lives on the download-badge branch so updates do not change the app's build number. -->
 
 Music is an unofficial YouTube Music app for macOS, built with Swift and WebKit. It opens the YouTube Music website in its own window, where you can sign in and access your library and playlists. You can play, pause, and change tracks from macOS Now Playing.
 
