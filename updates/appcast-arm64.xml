@@ -3,14 +3,14 @@
     <channel>
         <title>Music</title>
         <item>
-            <title>1.1.1</title>
-            <pubDate>Tue, 06 Oct 2026 15:04:27 +0800</pubDate>
-            <link>https://github.com/indradprasetya/yt-music-webkit/releases/tag/1.1.1</link>
-            <sparkle:version>13</sparkle:version>
-            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+            <title>1.1.0</title>
+            <pubDate>Tue, 06 Oct 2026 16:00:33 +0800</pubDate>
+            <link>https://github.com/indradprasetya/yt-music-webkit/releases/tag/v1.1.0</link>
+            <sparkle:version>15</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/indradprasetya/yt-music-webkit/releases/download/1.1.1/Download-Music-Apple-Silicon.dmg" length="2135529" type="application/octet-stream" sparkle:edSignature="ogGVMBXKA+83WJ42lKGLdBp0l6Hpp96InyOk7nbznO9Hbjg8nbDePgjpODIDKA8lVXP/G9HzQFNLSPI4xYvHBw=="/>
+            <enclosure url="https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.0/Music-1.1.0-Apple-Silicon.dmg" length="2135289" type="application/octet-stream" sparkle:edSignature="A39LCQzFhGkBTW2jj0M6CdTbNfcU0ZVjRzqv/JR2/rL+hw/sP4TDAXeXYuBXJPK6fcTNIsNRKstjl+Xv0UkFDw=="/>
         </item>
     </channel>
 </rss>
