@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check a local release folder, or --published, followed by its GitHub tag."""
 import hashlib
+import json
 from pathlib import Path
 import sys
 import urllib.error
@@ -25,18 +26,24 @@ def read(name, metadata=False):
             return (root / "updates" / name).read_bytes()
         return (Path(source) / name).read_bytes()
     except (OSError, urllib.error.URLError) as error:
-        sys.exit(f"Cannot read {name}: {error}. Upload all four release files and push updates/ to main.")
+        sys.exit(f"Cannot read {name}: {error}. Upload both DMGs and push updates/ to main.")
 
+version = tag.removeprefix("music-").removeprefix("v")
+expected_assets = {f"Music-{version}-{label}.dmg" for label in ("Apple-Silicon", "Intel")}
+if source == "--published":
+    with urllib.request.urlopen(f"https://api.github.com/repos/indradprasetya/yt-music-webkit/releases/tags/{tag}", timeout=30) as response:
+        assets = {asset["name"] for asset in json.load(response)["assets"]}
+else:
+    assets = {path.name for path in Path(source).iterdir() if path.name != ".DS_Store"}
+assert assets == expected_assets, f"Upload folder/release must contain only the two versioned DMGs: {assets}"
 checksums = dict(line.split(maxsplit=1)[::-1] for line in read("SHA256SUMS.txt", metadata=True).decode().splitlines())
 for arch, label in [("arm64", "Apple-Silicon"), ("x86_64", "Intel")]:
     feed_name = f"appcast-{arch}.xml"
-    feed_data = read(feed_name)
-    assert feed_data == read(feed_name, metadata=True), f"Repository and compatibility feeds differ: {feed_name}"
+    feed_data = read(feed_name, metadata=True)
     item = ET.fromstring(feed_data).find("./channel/item")
     assert item is not None, f"Missing update in {feed_name}"
-    version = item.findtext(f"{{{namespace}}}shortVersionString")
-    assert version == tag.removeprefix("music-"), f"Wrong version in {feed_name}"
-    filename = f"Download-Music-{label}.dmg"
+    assert item.findtext(f"{{{namespace}}}shortVersionString") == version, f"Wrong version in {feed_name}"
+    filename = f"Music-{version}-{label}.dmg"
     enclosure = item.find("enclosure")
     assert enclosure is not None and enclosure.get("url") == f"{repo}/releases/download/{tag}/{filename}", f"Wrong release tag or package in {feed_name}"
     assert enclosure.get(f"{{{namespace}}}edSignature"), f"Missing signature in {feed_name}"

@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix="music-version-check-") as directory:
     def check(expected, tag="", cwd=repo):
         result = subprocess.run(["bash", "scripts/release.sh", "--version", tag],
                                 cwd=cwd, capture_output=True, text=True)
-        if expected.startswith("music-") or expected[:1].isdigit():
+        if expected.startswith(("music-", "v")) or expected[:1].isdigit():
             assert result.returncode == 0, result.stderr
             assert result.stdout.strip() == expected, result.stdout
         else:
@@ -36,24 +36,25 @@ with tempfile.TemporaryDirectory(prefix="music-version-check-") as directory:
     check("music-1.1.0 1.1.0 1")
     git("commit", "--allow-empty", "-qm", "Next release")
     check("tag on HEAD", "music-1.1.0")
-    git("tag", "-a", "1.1.1", "-m", "Music 1.1.1")
-    check("1.1.1 1.1.1 2")
-    check("1.1.1 1.1.1 2", "1.1.1")
+    git("tag", "-a", "v1.1.1", "-m", "Music 1.1.1")
+    check("v1.1.1 1.1.1 2")
+    check("v1.1.1 1.1.1 2", "v1.1.1")
     check("tag on HEAD", "music-01.1.1")
     check("tag on HEAD", "01.1.1")
-    git("tag", "music-1.1.1")
+    check("tag on HEAD", "v01.1.1")
+    git("tag", "1.1.1")
     check("tag on HEAD")
     check("1.1.1 1.1.1 2", "1.1.1")
-    git("tag", "-d", "music-1.1.1")
+    git("tag", "-d", "1.1.1")
     (repo / "pending.txt").write_text("not committed")
     check("Commit or stash")
     git("add", "pending.txt")
     check("Commit or stash")
     git("reset", "-q", "HEAD", "pending.txt")
     (repo / "pending.txt").unlink()
-    git("tag", "1.1.2")
-    check("Build number must exceed", "1.1.2")
-    git("tag", "-d", "1.1.2")
+    git("tag", "v1.1.2")
+    check("Build number must exceed", "v1.1.2")
+    git("tag", "-d", "v1.1.2")
 
     # Exercise the actual release entrypoint, stopping before signing or notarization.
     tools = work / "bin"
