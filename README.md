@@ -11,6 +11,12 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
+## Development
+
+Open `Music.xcodeproj` in Xcode 16 or newer, select the **Music** scheme and **My Mac**, then press **Command-R**. The app targets macOS 12 or newer and uses local ad-hoc signing, so no Apple Developer team is required to run it.
+
+Source code and app resources live in `Music/`. See [BUILD.md](BUILD.md) for terminal builds and DMG packaging.
+
 ## Screenshots
 
 ### Music window
