@@ -7,10 +7,14 @@
 
 /* Begin PBXBuildFile section */
 		000000000000000000000201 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000203 /* Sparkle */; };
+		000000000000000000000301 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000303 /* LICENSE */; };
+		000000000000000000000302 /* THIRD_PARTY_NOTICES.txt in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000304 /* THIRD_PARTY_NOTICES.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Music.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Music.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000303 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		000000000000000000000304 /* THIRD_PARTY_NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = THIRD_PARTY_NOTICES.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -48,6 +52,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* Music */,
+				000000000000000000000303 /* LICENSE */,
+				000000000000000000000304 /* THIRD_PARTY_NOTICES.txt */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -118,7 +124,10 @@
 		000000000000000140000000 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = ();
+			files = (
+				000000000000000000000301 /* LICENSE in Resources */,
+				000000000000000000000302 /* THIRD_PARTY_NOTICES.txt in Resources */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */

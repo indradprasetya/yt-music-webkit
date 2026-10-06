@@ -22,3 +22,15 @@ The ⓘ button in the top-right title bar shows the installed version and update
 ### macOS Now Playing
 
 ![macOS Now Playing controls with album artwork, playback controls, and track progress](docs/screenshots/now-playing.png)
+
+## License
+
+Copyright (c) 2026 indradprasetya.
+
+Music's source code is licensed under the **GNU General Public License version 3 only** (`GPL-3.0-only`). You may use, modify, and redistribute it under the terms of [LICENSE](LICENSE). It is provided without warranty.
+
+When distributing Music or a modified version, provide the corresponding source code under GPLv3. See [BUILD.md](BUILD.md) for build and release instructions.
+
+Third-party components retain their own licenses. [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) contains the notices for Sparkle and its bundled components. Both license files are included in the app's `Contents/Resources` directory.
+
+Music is not affiliated with or endorsed by Google or YouTube. YouTube Music, its branding, and the content accessed through the service are not covered by this project's license and remain subject to their respective owners' rights and the [YouTube Terms of Service](https://www.youtube.com/static?template=terms).
