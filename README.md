@@ -25,7 +25,7 @@ The ⓘ button in the top-right title bar shows the installed version and update
 
 ## License
 
-Copyright (c) 2026 indradprasetya.
+Copyright © 2026 indradprasetya.
 
 Music's source code is licensed under the **GNU General Public License version 3 only** (`GPL-3.0-only`). You may use, modify, and redistribute it under the terms of [LICENSE](LICENSE). It is provided without warranty.
 
