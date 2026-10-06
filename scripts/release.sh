@@ -6,6 +6,44 @@ profile="${1:-music-notary}"
 team="${MUSIC_TEAM_ID:-B48JYPPTK6}"
 identity="Developer ID Application"
 repo="https://github.com/indradprasetya/yt-music-webkit"
+metadata=$(python3 - "${2:-}" <<'PY'
+import re
+import subprocess
+import sys
+
+def git(*args):
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+if git("status", "--porcelain"):
+    sys.exit("Commit or stash pending changes before building a release.")
+if git("rev-parse", "--is-shallow-repository") == "true":
+    sys.exit("Fetch full history and tags first: git fetch --unshallow --tags")
+
+pattern = r"music-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+tags = [tag for tag in git("tag", "--list", "music-*").splitlines() if re.fullmatch(pattern, tag)]
+head = git("rev-parse", "HEAD")
+current = [tag for tag in tags if git("rev-parse", tag + "^{commit}") == head]
+tag = sys.argv[1] or (current[0] if len(current) == 1 else "")
+if tag not in current:
+    sys.exit("Release requires a music-X.Y.Z tag on HEAD. Pass it as the second argument if needed.")
+version = tag.removeprefix("music-")
+build = int(git("rev-list", "--count", "HEAD"))
+for previous in tags:
+    if previous == tag:
+        continue
+    if tuple(map(int, previous.removeprefix("music-").split("."))) >= tuple(map(int, version.split("."))):
+        sys.exit(f"Release version must be newer than {previous}.")
+    if int(git("rev-list", "--count", previous)) >= build:
+        sys.exit(f"Build number must exceed {previous}. Commit the release changes on the current release history first.")
+print(tag, version, build)
+PY
+)
+read -r release_tag version build <<< "$metadata"
+if [ "$profile" = --version ]; then
+    printf '%s\n' "$metadata"
+    exit 0
+fi
+printf 'Building %s (build %s)\n' "$release_tag" "$build"
 mkdir -p dist
 work=$(mktemp -d "$PWD/dist/release.XXXXXX")
 release="$work/upload"
@@ -30,6 +68,7 @@ for arch in arm64 x86_64; do
         -destination 'generic/platform=macOS' -derivedDataPath "$work/build" \
         -clonedSourcePackagesDirPath "$PWD/dist/updater-build/SourcePackages" \
         -archivePath "$work/$arch.xcarchive" ARCHS="$arch" ONLY_ACTIVE_ARCH=NO \
+        MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="$build" \
         CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$identity" DEVELOPMENT_TEAM="$team" \
         OTHER_CODE_SIGN_FLAGS=--timestamp archive > "$work/build-$arch.log" 2>&1
     xcodebuild -quiet -exportArchive -archivePath "$work/$arch.xcarchive" \
@@ -39,8 +78,8 @@ for arch in arm64 x86_64; do
     mkdir "$stage"
     ditto "$work/export-$arch/Music.app" "$stage/Music.app"
     codesign --verify --deep --strict "$stage/Music.app"
-    version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Music.app/Contents/Info.plist")
-    release_tag="${2:-music-$version}"
+    test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Music.app/Contents/Info.plist")" = "$version"
+    test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$stage/Music.app/Contents/Info.plist")" = "$build"
     ln -s /Applications "$stage/Applications"
     mkdir "$stage/.background"
     cp packaging/dmg-background.png "$stage/.background/background.png"
