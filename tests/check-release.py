@@ -12,24 +12,31 @@ if len(sys.argv) != 3:
 source, tag = sys.argv[1:]
 repo = "https://github.com/indradprasetya/yt-music-webkit"
 namespace = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+root = Path(__file__).resolve().parents[1]
+raw = "https://raw.githubusercontent.com/indradprasetya/yt-music-webkit/main/updates"
 
-def read(name):
+def read(name, metadata=False):
     try:
         if source == "--published":
-            with urllib.request.urlopen(f"{repo}/releases/latest/download/{name}", timeout=30) as response:
+            address = f"{raw}/{name}" if metadata else f"{repo}/releases/download/{tag}/{name}"
+            with urllib.request.urlopen(address, timeout=30) as response:
                 return response.read()
+        if metadata:
+            return (root / "updates" / name).read_bytes()
         return (Path(source) / name).read_bytes()
     except (OSError, urllib.error.URLError) as error:
-        sys.exit(f"Cannot read {name}: {error}. Upload all five files to the latest release.")
+        sys.exit(f"Cannot read {name}: {error}. Upload all four release files and push updates/ to main.")
 
-checksums = dict(line.split(maxsplit=1)[::-1] for line in read("SHA256SUMS.txt").decode().splitlines())
+checksums = dict(line.split(maxsplit=1)[::-1] for line in read("SHA256SUMS.txt", metadata=True).decode().splitlines())
 for arch, label in [("arm64", "Apple-Silicon"), ("x86_64", "Intel")]:
     feed_name = f"appcast-{arch}.xml"
     feed_data = read(feed_name)
+    assert feed_data == read(feed_name, metadata=True), f"Repository and compatibility feeds differ: {feed_name}"
     item = ET.fromstring(feed_data).find("./channel/item")
     assert item is not None, f"Missing update in {feed_name}"
     version = item.findtext(f"{{{namespace}}}shortVersionString")
-    filename = f"Music-{version}-{label}.dmg"
+    assert version == tag.removeprefix("music-"), f"Wrong version in {feed_name}"
+    filename = f"Music-{label}.dmg"
     enclosure = item.find("enclosure")
     assert enclosure is not None and enclosure.get("url") == f"{repo}/releases/download/{tag}/{filename}", f"Wrong release tag or package in {feed_name}"
     assert enclosure.get(f"{{{namespace}}}edSignature"), f"Missing signature in {feed_name}"

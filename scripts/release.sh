@@ -19,17 +19,19 @@ if git("status", "--porcelain"):
 if git("rev-parse", "--is-shallow-repository") == "true":
     sys.exit("Fetch full history and tags first: git fetch --unshallow --tags")
 
-pattern = r"music-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-tags = [tag for tag in git("tag", "--list", "music-*").splitlines() if re.fullmatch(pattern, tag)]
+pattern = r"(?:music-)?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+tags = [tag for tag in git("tag", "--list").splitlines() if re.fullmatch(pattern, tag)]
 head = git("rev-parse", "HEAD")
 current = [tag for tag in tags if git("rev-parse", tag + "^{commit}") == head]
 tag = sys.argv[1] or (current[0] if len(current) == 1 else "")
 if tag not in current:
-    sys.exit("Release requires a music-X.Y.Z tag on HEAD. Pass it as the second argument if needed.")
+    sys.exit("Release requires an X.Y.Z tag on HEAD (legacy music-X.Y.Z also works). Pass it as the second argument if needed.")
 version = tag.removeprefix("music-")
 build = int(git("rev-list", "--count", "HEAD"))
 for previous in tags:
     if previous == tag:
+        continue
+    if previous.removeprefix("music-") == version and previous in current:
         continue
     if tuple(map(int, previous.removeprefix("music-").split("."))) >= tuple(map(int, version.split("."))):
         sys.exit(f"Release version must be newer than {previous}.")
@@ -84,7 +86,7 @@ for arch in arm64 x86_64; do
     mkdir "$stage/.background"
     cp packaging/dmg-background.png "$stage/.background/background.png"
     if [ "$arch" = arm64 ]; then label=Apple-Silicon; else label=Intel; fi
-    dmg="$release/Music-$version-$label.dmg"
+    dmg="$release/Music-$label.dmg"
     hdiutil create -quiet -volname "Music $version $label" -srcfolder "$stage" -fs HFS+ -format UDRW "$work/layout-$arch.dmg"
     mounted="$work/mount-$arch"
     mkdir "$mounted"
@@ -102,7 +104,7 @@ done
 sparkle="$PWD/dist/updater-build/SourcePackages/artifacts/sparkle/Sparkle/bin"
 for arch in arm64 x86_64; do
     if [ "$arch" = arm64 ]; then label=Apple-Silicon; else label=Intel; fi
-    dmg="$release/Music-$version-$label.dmg"
+    dmg="$release/Music-$label.dmg"
     submission=$(plutil -extract id raw "$work/submission-$arch.json")
     xcrun notarytool wait "$submission" --keychain-profile "$profile" --timeout 1h --output-format json > "$work/status-$arch.json"
     xcrun notarytool log "$submission" --keychain-profile "$profile" "$work/notary-log-$arch.json"
@@ -119,13 +121,22 @@ for arch in arm64 x86_64; do
         --link "$repo/releases/tag/$release_tag" \
         -o "$release/appcast-$arch.xml" "$work/feed-$arch"
 done
-(cd "$release" && shasum -a 256 ./*.dmg ./appcast-*.xml > SHA256SUMS.txt)
+mkdir -p updates
+cp "$release"/appcast-*.xml updates/
+(cd "$release" && shasum -a 256 ./*.dmg ./appcast-*.xml) > updates/SHA256SUMS.txt
 python3 tests/check-release.py "$release" "$release_tag"
 cat > "$work/PUBLISH.txt" <<TEXT
 GitHub release: $repo/releases/tag/$release_tag
-Upload all five files from: $release
-For an existing release, replace both DMGs and any previous feeds/checksums.
-Keep this release marked Latest. The XML files are required for update checks.
+Upload these four files from $release to a draft release:
+  Music-Apple-Silicon.dmg
+  Music-Intel.dmg
+  appcast-arm64.xml
+  appcast-x86_64.xml
+Keep the DMG names unchanged: the download badges count these exact names.
+Publish the release and mark it Latest, then immediately commit and push updates/ to main.
+New apps read the repository feeds. Keep the two release XML files while supporting
+apps older than 1.1.1, which still read releases/latest/download/appcast-<arch>.xml.
+Checksums are in updates/SHA256SUMS.txt; do not upload them as a release asset.
 After publishing: python3 tests/check-release.py --published $release_tag
 TEXT
 printf '\nVerified release files ready to upload: %s\n' "$release"

@@ -1,0 +1,16 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Music</title>
+        <item>
+            <title>1.1.1</title>
+            <pubDate>Tue, 06 Oct 2026 15:04:27 +0800</pubDate>
+            <link>https://github.com/indradprasetya/yt-music-webkit/releases/tag/1.1.1</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/indradprasetya/yt-music-webkit/releases/download/1.1.1/Music-Apple-Silicon.dmg" length="2135529" type="application/octet-stream" sparkle:edSignature="ogGVMBXKA+83WJ42lKGLdBp0l6Hpp96InyOk7nbznO9Hbjg8nbDePgjpODIDKA8lVXP/G9HzQFNLSPI4xYvHBw=="/>
+        </item>
+    </channel>
+</rss>

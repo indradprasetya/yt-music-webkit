@@ -15,7 +15,7 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 indradprasetya. Licensed under GNU GPL version 3 only.</string>
-    <key>SUFeedURL</key><string>https://github.com/indradprasetya/yt-music-webkit/releases/latest/download/appcast.xml</string>
+    <key>SUFeedURL</key><string>https://raw.githubusercontent.com/indradprasetya/yt-music-webkit/main/updates/appcast-arm64.xml</string>
     <key>SUPublicEDKey</key><string>fACbQHLXPIXN7TFlKQ6xYsnmYmS6h2+q9fe8liTVpOE=</string>
     <key>SUEnableAutomaticChecks</key><true/>
     <key>SUAllowsAutomaticUpdates</key><false/>

@@ -1,8 +1,7 @@
 on run arguments
     set diskFolder to (POSIX file (item 1 of arguments)) as alias
     tell application "Finder"
-        open diskFolder
-        set diskWindow to container window of diskFolder
+        set diskWindow to make new Finder window to diskFolder
         set current view of diskWindow to icon view
         set toolbar visible of diskWindow to false
         set statusbar visible of diskWindow to false

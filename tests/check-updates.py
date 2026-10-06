@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build first as documented in BUILD.md, then run python3 tests/check-updates.py."""
+"""Build Debug in dist/updater-build, then run python3 tests/check-updates.py."""
 import functools
 import http.server
 import os
@@ -43,17 +43,24 @@ let app = NSApplication.shared
 let domain = Bundle.main.bundleIdentifier!
 UserDefaults.standard.removePersistentDomain(forName: domain)
 let expected = CommandLine.arguments[1]
+let scenario = CommandLine.arguments[2]
 let updates = MusicUpdates()
 assert(updates.menu.items[0].title == "Music 1.1.0", "Only the marketing version should be visible")
 assert(updates.updater.automaticallyChecksForUpdates)
 assert(!updates.updater.automaticallyDownloadsUpdates)
 updates.toggleAutomaticChecks()
 assert(!MusicUpdates().updater.automaticallyChecksForUpdates, "Preference must persist")
-if expected != "Not checked yet" { updates.toggleAutomaticChecks() }
+if scenario != "disabled" { updates.toggleAutomaticChecks() }
+if scenario == "recent" || scenario == "manual" {
+    UserDefaults.standard.set(Date(), forKey: "SULastCheckTime")
+}
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
 updates.attach(to: window)
+if scenario == "manual" {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { updates.checkForUpdates() }
+}
 let deadline = Date().addingTimeInterval(10)
-let earliest = Date().addingTimeInterval(0.5)
+let earliest = Date().addingTimeInterval(2)
 let timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
     let status = updates.menu.items[1].title
     if Date() > earliest && status == expected {
@@ -66,7 +73,7 @@ let timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             assert(updates.menu.items[2].isHidden)
         }
         UserDefaults.standard.removePersistentDomain(forName: domain)
-        print("PASS: \(expected)")
+        print("PASS: \(scenario): \(expected)")
         exit(0)
     }
     if Date() > deadline { fatalError("Expected \(expected), got \(status)") }
@@ -79,17 +86,19 @@ app.run()
                     "-o", str(app / "MacOS/UpdateCheck")], env=env, check=True)
     feed = '''<?xml version="1.0"?><rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><title>Music</title><item><title>Music 1.1.0</title><sparkle:version>{build}</sparkle:version><sparkle:shortVersionString>1.1.0</sparkle:shortVersionString><enclosure url="https://example.com/Music.dmg" length="100" type="application/octet-stream"/></item></channel></rss>'''
     try:
-        for expected, data in [("Up to date", feed.format(build=5)),
-                               ("Update available", feed.format(build=6)),
-                               ("Couldn’t check for updates", "invalid XML"),
-                               ("Not checked yet", feed.format(build=6))]:
+        for expected, data, scenario in [("Up to date", feed.format(build=5), "scheduled"),
+                                         ("Update available", feed.format(build=6), "scheduled"),
+                                         ("Couldn’t check for updates", "invalid XML", "scheduled"),
+                                         ("Not checked yet", feed.format(build=6), "disabled"),
+                                         ("Not checked yet", feed.format(build=6), "recent"),
+                                         ("Update available", feed.format(build=6), "manual")]:
             for arch in ("arm64", "x86_64"):
                 (work / f"appcast-{arch}.xml").write_text(data)
             requests.clear()
-            subprocess.run([str(app / "MacOS/UpdateCheck"), expected], check=True, timeout=15)
+            subprocess.run([str(app / "MacOS/UpdateCheck"), expected, scenario], check=True, timeout=15)
             assert len(requests) == (0 if expected == "Not checked yet" else 1), requests
         server.shutdown()
         server.server_close()
-        subprocess.run([str(app / "MacOS/UpdateCheck"), "Couldn’t check for updates"], check=True, timeout=15)
+        subprocess.run([str(app / "MacOS/UpdateCheck"), "Couldn’t check for updates", "scheduled"], check=True, timeout=15)
     finally:
         server.server_close()

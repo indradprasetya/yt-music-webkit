@@ -1,0 +1,4 @@
+8ec0d027833b572fe774b2bab8c333d60bfe742db7278c0dfd201cbc2f60d17e  ./Music-Apple-Silicon.dmg
+6869994e4de47ecaddcd27b4b685244557668aed9214b8c4aad078d6ef6bd6c4  ./Music-Intel.dmg
+e4bcfe62eddeff08656554f2329362403e4aaf7d1917830ba0af2d4c6877ab4b  ./appcast-arm64.xml
+e5e7ff61857741cb67101b1eb8a815f2f25d99d09b3bf3e091f4124a7678a062  ./appcast-x86_64.xml

@@ -49,9 +49,6 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
         NSApp.mainMenu?.items.first?.submenu?.insertItem(appMenuItem, at: 0)
         do {
             try updater.start()
-            if updater.automaticallyChecksForUpdates {
-                updater.checkForUpdatesInBackground()
-            }
         } catch {
             statusItem.title = "Updates unavailable"
             statusItem.toolTip = error.localizedDescription
