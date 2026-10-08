@@ -2,34 +2,23 @@ import AppKit
 import Sparkle
 
 final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate, SUVersionDisplay {
-    let button = NSButton(frame: NSRect(x: 0, y: 0, width: 32, height: 22))
-    let menu = NSMenu()
-    private let statusItem = NSMenuItem(title: "Not checked yet", action: nil, keyEquivalent: "")
-    private let updateItem = NSMenuItem(title: "Install Update…", action: #selector(checkForUpdates), keyEquivalent: "")
+    let menu = NSMenu(title: "Updates")
     private let checkItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-    private let automaticItem = NSMenuItem(title: "Automatically Check for Updates", action: #selector(toggleAutomaticChecks), keyEquivalent: "")
+    private weak var window: NSWindow?
     private var controller: SPUStandardUpdaterController!
     private var availableUpdate: SUAppcastItem?
     private var availabilityObservation: NSKeyValueObservation?
+    private var releaseNotesTask: Task<Void, Never>?
     var updater: SPUUpdater { controller.updater }
 
     override init() {
         super.init()
         controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
-        button.isBordered = false
-        button.target = self
-        button.action = #selector(showMenu)
-        button.setAccessibilityLabel("Music information and updates")
-        refreshButton()
-
         menu.autoenablesItems = false
         menu.delegate = self
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let versionItem = NSMenuItem(title: "Music \(version)", action: nil, keyEquivalent: "")
-        versionItem.isEnabled = false
-        statusItem.isEnabled = false
-        updateItem.isHidden = true
-        for item in [versionItem, statusItem, updateItem, .separator(), checkItem, automaticItem] {
+        checkItem.toolTip = "Not checked yet"
+        let notesItem = NSMenuItem(title: "What’s New…", action: #selector(showReleaseNotes), keyEquivalent: "")
+        for item in [checkItem, notesItem] {
             item.target = self
             menu.addItem(item)
         }
@@ -39,24 +28,54 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
     }
 
     func attach(to window: NSWindow) {
-        let accessory = NSTitlebarAccessoryViewController()
-        accessory.layoutAttribute = .right
-        accessory.view = button
-        window.addTitlebarAccessoryViewController(accessory)
-
-        let appMenuItem = NSMenuItem(title: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
-        appMenuItem.target = controller
-        NSApp.mainMenu?.items.first?.submenu?.insertItem(appMenuItem, at: 0)
+        self.window = window
+        let updatesItem = NSMenuItem(title: "Updates", action: nil, keyEquivalent: "")
+        updatesItem.submenu = menu
+        NSApp.mainMenu?.addItem(updatesItem)
         do {
             try updater.start()
         } catch {
-            statusItem.title = "Updates unavailable"
-            statusItem.toolTip = error.localizedDescription
+            checkItem.toolTip = "Updates unavailable: \(error.localizedDescription)"
         }
     }
 
-    @objc private func showMenu() {
-        menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.maxX, y: button.bounds.minY), in: button)
+    @objc private func showReleaseNotes() {
+        guard let window else { return }
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        guard window.attachedSheet == nil else { return }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let alert = NSAlert()
+        alert.messageText = "Music \(version)"
+        alert.informativeText = "What’s New in This Version"
+        alert.addButton(withTitle: "Done")
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 280))
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        let textView = NSTextView(frame: scrollView.contentView.bounds)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = .systemFont(ofSize: 13)
+        textView.textColor = .labelColor
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.setAccessibilityLabel("What’s New in This Version")
+        textView.string = "Loading release notes…"
+        scrollView.documentView = textView
+        alert.accessoryView = scrollView
+        alert.beginSheetModal(for: window) { [weak self] _ in
+            self?.releaseNotesTask?.cancel()
+            self?.releaseNotesTask = nil
+        }
+        releaseNotesTask = Task { @MainActor in
+            let notes = await MusicReleaseNotes.load(version: version)
+            guard !Task.isCancelled else { return }
+            textView.string = notes.cached ? "Couldn’t refresh — showing saved release notes.\n\n\(notes.text)" : notes.text
+            textView.scrollToBeginningOfDocument(nil)
+        }
     }
 
     @objc func checkForUpdates() {
@@ -64,23 +83,10 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
         controller.checkForUpdates(nil)
     }
 
-    @objc func toggleAutomaticChecks() {
-        updater.automaticallyChecksForUpdates.toggle()
-        refreshMenu()
-    }
-
     func menuNeedsUpdate(_ menu: NSMenu) { refreshMenu() }
 
     private func refreshMenu() {
         checkItem.isEnabled = updater.canCheckForUpdates
-        updateItem.isEnabled = updater.canCheckForUpdates
-        automaticItem.state = updater.automaticallyChecksForUpdates ? .on : .off
-    }
-
-    private func refreshButton() {
-        button.image = NSImage(systemSymbolName: availableUpdate == nil ? "info.circle" : "info.circle.fill", accessibilityDescription: nil)
-        button.contentTintColor = availableUpdate == nil ? .secondaryLabelColor : .controlAccentColor
-        button.toolTip = availableUpdate == nil ? "Music information and updates" : "A Music update is available"
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
@@ -95,32 +101,28 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
     }
 
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
-        statusItem.title = "Checking…"
-        statusItem.toolTip = nil
+        checkItem.toolTip = "Checking…"
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         availableUpdate = item
-        statusItem.title = "Update available"
-        updateItem.title = "Update to \(item.displayVersionString)…"
-        updateItem.isHidden = false
-        refreshButton()
+        checkItem.toolTip = "Update available"
+        checkItem.title = "Update to \(item.displayVersionString)…"
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
         availableUpdate = nil
-        updateItem.isHidden = true
+        checkItem.title = "Check for Updates…"
         let reason = (error as NSError).userInfo[SPUNoUpdateFoundReasonKey] as? Int
         let current = [SPUNoUpdateFoundReason.onLatestVersion, .onNewerThanLatestVersion].contains { Int($0.rawValue) == reason }
-        statusItem.title = current ? "Up to date" : "No compatible update available"
-        refreshButton()
+        checkItem.toolTip = current ? "Up to date" : "No compatible update available"
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         if let error = error as NSError?,
            !(error.domain == SUSparkleErrorDomain && [SUError.noUpdateError, .installationCanceledError].contains { Int($0.rawValue) == error.code }) {
-            statusItem.title = availableUpdate == nil ? "Couldn’t check for updates" : "Update couldn’t complete"
-            statusItem.toolTip = error.localizedDescription
+            let message = availableUpdate == nil ? "Couldn’t check for updates" : "Update couldn’t complete"
+            checkItem.toolTip = "\(message): \(error.localizedDescription)"
         }
         refreshMenu()
     }
