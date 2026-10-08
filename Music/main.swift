@@ -34,6 +34,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             defer: false
         )
         window.title = "Music"
+        window.titleVisibility = .hidden
         window.center()
         window.contentView = webView
         window.delegate = self
@@ -46,6 +47,10 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         return false
+    }
+
+    @objc func refresh() {
+        webView.reload()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
@@ -69,16 +74,15 @@ app.setActivationPolicy(.regular)
 
 let menu = NSMenu()
 let appMenu = NSMenu()
+appMenu.addItem(withTitle: "About Music", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+appMenu.addItem(.separator())
+let refreshItem = appMenu.addItem(withTitle: "Refresh", action: #selector(MusicApp.refresh), keyEquivalent: "r")
+refreshItem.target = delegate
+appMenu.addItem(.separator())
 appMenu.addItem(withTitle: "Quit Music", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 let appItem = NSMenuItem()
 appItem.submenu = appMenu
 menu.addItem(appItem)
-
-let fileMenu = NSMenu(title: "File")
-fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
-fileItem.submenu = fileMenu
-menu.addItem(fileItem)
 
 app.mainMenu = menu
 app.run()
