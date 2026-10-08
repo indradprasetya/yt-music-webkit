@@ -1,0 +1,68 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "layers": [
+    {
+      "filename": "Logo.iconstacklayer"
+    }
+  ],
+  "properties": {
+    "opacity": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": 1
+      }
+    ],
+    "material-strength": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": 0
+      }
+    ],
+    "translucency": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": 0
+      }
+    ],
+    "specular": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": false
+      }
+    ],
+    "shadow": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "kind": "neutral",
+          "opacity": 0
+        }
+      }
+    ],
+    "refractivity": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "enabled": false,
+          "depth": 0,
+          "strength": 0
+        }
+      }
+    ]
+  }
+}

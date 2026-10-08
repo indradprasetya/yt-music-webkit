@@ -1,0 +1,89 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "properties": {
+    "image": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "matching-style": "fully-qualified-name",
+          "name": "Light",
+          "type": "image-set"
+        }
+      },
+      {
+        "icon-studio-appearance": "light",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "matching-style": "fully-qualified-name",
+          "name": "Light",
+          "type": "image-set"
+        }
+      },
+      {
+        "icon-studio-appearance": "dark",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "matching-style": "fully-qualified-name",
+          "name": "Dark",
+          "type": "image-set"
+        }
+      },
+      {
+        "icon-studio-appearance": "tinted",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "matching-style": "fully-qualified-name",
+          "name": "Dark",
+          "type": "image-set"
+        }
+      }
+    ],
+    "frame": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "origin.x": -128,
+          "origin.y": -128,
+          "size.width": 1280,
+          "size.height": 1280
+        }
+      }
+    ],
+    "fill": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "type": "automatic"
+        }
+      }
+    ],
+    "is-glass": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": false
+      }
+    ],
+    "opacity": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": 1
+      }
+    ]
+  }
+}

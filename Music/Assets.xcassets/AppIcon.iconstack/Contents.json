@@ -1,0 +1,39 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "groups": [
+    {
+      "filename": "Artwork.iconstackgroup"
+    }
+  ],
+  "properties": {
+    "canvas-size": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "height": 1024,
+          "width": 1024
+        }
+      }
+    ],
+    "background": [
+      {
+        "icon-studio-appearance": "unspecified",
+        "icon-studio-idiom": "macOS",
+        "icon-studio-localization": "unspecified",
+        "value": {
+          "type": "solid",
+          "color": {
+            "type": "color-set",
+            "matching-style": "fully-qualified-name",
+            "name": "Background"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "images": [
+    {
+      "idiom": "mac",
+      "filename": "dark.png",
+      "scale": "1x"
+    }
+  ]
+}
