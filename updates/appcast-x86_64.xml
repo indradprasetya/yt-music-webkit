@@ -4,12 +4,12 @@
         <title>Music</title>
         <item>
             <title>1.1.1</title>
-            <pubDate>Thu, 08 Oct 2026 09:51:59 +0800</pubDate>
+            <pubDate>Thu, 08 Oct 2026 10:25:20 +0800</pubDate>
             <link>https://github.com/indradprasetya/yt-music-webkit/releases/tag/v1.1.1</link>
-            <sparkle:version>30</sparkle:version>
+            <sparkle:version>33</sparkle:version>
             <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Intel.dmg" length="6041443" type="application/octet-stream" sparkle:edSignature="PKls+brcnzMGHUquRnMo8v2cXfYiuP/0BME2oki8zDFxnkJQhSZDrwlvpFi6VawqDokcMeExy4dWRTLzfiBiDA=="/>
+            <enclosure url="https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Intel.dmg" length="6041846" type="application/octet-stream" sparkle:edSignature="ii+QW331npE34Okrch2TQnvr1omCLuHDE+kbyy4INCjlHHUKVEsVTWzeNJ+1YZ/NRyl2N6VBWWj3toMqJT+eDw=="/>
         </item>
     </channel>
 </rss>
