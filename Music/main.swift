@@ -5,6 +5,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var window: NSWindow!
     private var webView: WKWebView!
     private var updates: MusicUpdates!
+    private var backgroundObservation: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
@@ -36,7 +37,9 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.title = "Music"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(srgbRed: 3 / 255, green: 3 / 255, blue: 3 / 255, alpha: 1)
+        backgroundObservation = webView.observe(\.underPageBackgroundColor, options: [.initial, .new]) { [weak window] view, _ in
+            window?.backgroundColor = view.underPageBackgroundColor
+        }
         window.center()
         window.contentView = webView
         window.delegate = self
