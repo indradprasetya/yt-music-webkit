@@ -11,16 +11,6 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
-## Security & Privacy
-
-Music does not collect personal data or send analytics, telemetry, or listening history to the developer. The app has no developer-operated backend.
-
-Music displays the YouTube Music website using WebKit. Google/YouTube may collect and process data when you sign in, listen, or interact with the service, as described in [Google's Privacy Policy](https://policies.google.com/privacy). WebKit stores cookies and website data locally on your Mac to maintain your session.
-
-Update checks, installer downloads, and What's New contact GitHub. These requests share standard connection information, such as your IP address, with GitHub under its [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
-
-Official release installers are signed with an Apple Developer ID and notarized by Apple. Sparkle verifies update signatures before installation.
-
 ## Screenshots
 
 ### Music window
@@ -30,6 +20,17 @@ Official release installers are signed with an Apple Developer ID and notarized 
 ### macOS Now Playing
 
 ![macOS Now Playing controls with album artwork, playback controls, and track progress](docs/screenshots/now-playing.png)
+
+## Privacy
+
+Music does not collect personal data or send analytics, telemetry, or listening history to the developer. The app has no developer-operated backend.
+
+Music displays the YouTube Music website using WebKit. Google/YouTube may collect and process data when you sign in, listen, or interact with the service, as described in [Google's Privacy Policy](https://policies.google.com/privacy). WebKit stores cookies and website data locally on your Mac to maintain your session.
+
+Update checks, installer downloads, and What's New contact GitHub. These requests share standard connection information, such as your IP address, with GitHub under its [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement).
+
+Official release installers are signed with an Apple Developer ID and notarized by Apple. Sparkle verifies update signatures before installation.
+
 
 ## License
 
