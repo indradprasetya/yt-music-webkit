@@ -35,6 +35,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         )
         window.title = "Music"
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(srgbRed: 3 / 255, green: 3 / 255, blue: 3 / 255, alpha: 1)
         window.center()
         window.contentView = webView
         window.delegate = self
