@@ -7,7 +7,7 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 checks = r'''
 final class ReleaseProtocol: URLProtocol {
-    static var body = "First description"
+    static var body = "<h2>What’s New</h2><ul><li>First description</li></ul>"
     static var tag = "v1.1.0"
     static var status = 200
     static var offline = false
@@ -25,7 +25,7 @@ final class ReleaseProtocol: URLProtocol {
         let response = HTTPURLResponse(url: request.url!, statusCode: Self.status,
                                        httpVersion: nil, headerFields: nil)!
         let data = Self.invalidJSON ? Data("invalid".utf8) : try! JSONSerialization.data(withJSONObject: [
-            "tag_name": Self.tag, "body": Self.body, "draft": Self.draft
+            "tag_name": Self.tag, "body_html": Self.body, "draft": Self.draft
         ])
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
@@ -36,6 +36,7 @@ final class ReleaseProtocol: URLProtocol {
 
 let domain = "MusicReleaseNotesCheck.\(UUID().uuidString)"
 let defaults = UserDefaults(suiteName: domain)!
+defaults.set("## Old raw Markdown", forKey: "GitHubReleaseNotes.v1.1.1")
 let configuration = URLSessionConfiguration.ephemeral
 configuration.protocolClasses = [ReleaseProtocol.self]
 let session = URLSession(configuration: configuration)
@@ -45,47 +46,54 @@ Task {
         session.invalidateAndCancel()
     }
     let first = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(first.text == "First description" && !first.cached)
-    ReleaseProtocol.body = "Edited on GitHub\n\n- New details"
+    assert(first.html == ReleaseProtocol.body && !first.cached)
+    ReleaseProtocol.body = "<h2>Fixed</h2><ul><li><strong>Edited</strong> on GitHub</li></ul>"
     let edited = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(edited.text == ReleaseProtocol.body && !edited.cached, "Reopening must fetch edits")
+    assert(edited.html == ReleaseProtocol.body && !edited.cached, "Reopening must fetch edits")
     assert(ReleaseProtocol.requests.count == 2)
     for request in ReleaseProtocol.requests {
         assert(request.url!.path.hasSuffix("/releases/tags/v1.1.0"))
+        assert(request.value(forHTTPHeaderField: "Accept") == "application/vnd.github.html+json")
         assert(request.cachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
         assert(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
     }
     ReleaseProtocol.offline = true
     let saved = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(saved.text == edited.text && saved.cached)
+    assert(saved.html == edited.html && saved.cached)
     let missing = await MusicReleaseNotes.load(version: "1.1.1", session: session, defaults: defaults)
-    assert(missing.text.contains("not available") && !missing.cached, "Cache must be isolated by version")
+    assert(missing.html.contains("not available") && !missing.cached, "Cache must be isolated by version")
     ReleaseProtocol.offline = false
     for status in [404, 403, 429, 500] {
         ReleaseProtocol.status = status
         let failed = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-        assert(failed.text == edited.text && failed.cached)
+        assert(failed.html == edited.html && failed.cached)
     }
     ReleaseProtocol.status = 200
     ReleaseProtocol.tag = "v1.1.1"
     let wrong = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(wrong.text == edited.text && wrong.cached, "Never show another version's notes")
+    assert(wrong.html == edited.html && wrong.cached, "Never show another version's notes")
     ReleaseProtocol.tag = "v1.1.0"
     ReleaseProtocol.invalidJSON = true
     let invalid = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(invalid.text == edited.text && invalid.cached)
+    assert(invalid.html == edited.html && invalid.cached)
     ReleaseProtocol.invalidJSON = false
     ReleaseProtocol.draft = true
     let draft = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(draft.text == edited.text && draft.cached)
+    assert(draft.html == edited.html && draft.cached)
     ReleaseProtocol.draft = false
     ReleaseProtocol.body = " \r\n "
     let empty = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(empty.text.contains("No release notes") && !empty.cached)
+    assert(empty.html.contains("No release notes") && !empty.cached)
     ReleaseProtocol.offline = true
     let savedEmpty = await MusicReleaseNotes.load(version: "1.1.0", session: session, defaults: defaults)
-    assert(savedEmpty.text == empty.text && savedEmpty.cached, "Empty notes must replace stale notes")
-    print("PASS: edited notes, fresh requests, per-version cache, empty notes, and failed responses")
+    assert(savedEmpty.html == empty.html && savedEmpty.cached, "Empty notes must replace stale notes")
+    let page = MusicReleaseNotes.document(html: edited.html)
+    assert(page.contains("<h2>Fixed</h2><ul><li><strong>Edited</strong> on GitHub</li></ul>"))
+    assert(!page.contains("What’s New in This Version"), "The app must not duplicate the release heading")
+    assert(page.contains("default-src 'none'") && page.contains("color-scheme: light dark"))
+    assert(!page.contains("showing saved release notes"))
+    assert(MusicReleaseNotes.document(html: edited.html, cached: true).contains("showing saved release notes"))
+    print("PASS: rendered release HTML, live edits, cache isolation, empty/error states, and document styling")
     CFRunLoopStop(CFRunLoopGetMain())
 }
 CFRunLoopRun()

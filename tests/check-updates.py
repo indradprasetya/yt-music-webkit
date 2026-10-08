@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Debug in dist/updater-build, then run python3 tests/check-updates.py."""
+"""Run against dist/updater-build, or set MUSIC_TEST_FRAMEWORKS to an existing Debug products directory."""
 import functools
 import http.server
 import os
@@ -10,7 +10,7 @@ import tempfile
 import threading
 
 root = Path(__file__).resolve().parents[1]
-frameworks = root / "dist/updater-build/Build/Products/Debug"
+frameworks = Path(os.environ.get("MUSIC_TEST_FRAMEWORKS", root / "dist/updater-build/Build/Products/Debug"))
 assert (frameworks / "Sparkle.framework").exists(), "Build Debug in dist/updater-build first"
 env = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")
 
@@ -65,6 +65,23 @@ assert(window.titlebarAccessoryViewControllers.isEmpty, "No info button in the t
 assert(app.mainMenu!.items.count == 2 && app.mainMenu!.items[1].title == "Updates")
 assert(app.mainMenu!.items[1].submenu === updates.menu)
 assert(appItem.submenu!.items.isEmpty, "Update actions must live only in Updates")
+if scenario == "disabled" {
+    let action = updates.menu.items[1].action!
+    app.sendAction(action, to: updates, from: nil)
+    let panel = app.windows.first { $0 is NSPanel && $0.isVisible }!
+    assert(window.attachedSheet == nil && panel.sheetParent == nil, "Release notes must be an independent panel")
+    assert(panel.title == "Music 1.1.0")
+    let closeButton = panel.standardWindowButton(.closeButton)!
+    assert(closeButton.isEnabled && !closeButton.isHidden)
+    app.sendAction(action, to: updates, from: nil)
+    assert(app.windows.filter { $0 is NSPanel && $0.isVisible }.count == 1, "Reuse the open panel")
+    closeButton.performClick(nil)
+    assert(!panel.isVisible, "The native close button must dismiss release notes")
+    app.sendAction(action, to: updates, from: nil)
+    let reopened = app.windows.first { $0 is NSPanel && $0.isVisible }!
+    assert(reopened !== panel, "Reopening must start fresh release notes")
+    reopened.performClose(nil)
+}
 if scenario == "manual" {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { updates.checkForUpdates() }
 }

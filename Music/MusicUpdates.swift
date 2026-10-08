@@ -1,10 +1,11 @@
 import AppKit
 import Sparkle
+import WebKit
 
-final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate, SUVersionDisplay {
+final class MusicUpdates: NSObject, NSMenuDelegate, NSWindowDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate, SUVersionDisplay, WKNavigationDelegate {
     let menu = NSMenu(title: "Updates")
     private let checkItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-    private weak var window: NSWindow?
+    private var releaseNotesWindow: NSPanel?
     private var controller: SPUStandardUpdaterController!
     private var availableUpdate: SUAppcastItem?
     private var availabilityObservation: NSKeyValueObservation?
@@ -27,8 +28,7 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
         }
     }
 
-    func attach(to window: NSWindow) {
-        self.window = window
+    func attach(to _: NSWindow) {
         let updatesItem = NSMenuItem(title: "Updates", action: nil, keyEquivalent: "")
         updatesItem.submenu = menu
         NSApp.mainMenu?.addItem(updatesItem)
@@ -40,42 +40,52 @@ final class MusicUpdates: NSObject, NSMenuDelegate, SPUUpdaterDelegate, SPUStand
     }
 
     @objc private func showReleaseNotes() {
-        guard let window else { return }
-        window.deminiaturize(nil)
-        window.makeKeyAndOrderFront(nil)
-        guard window.attachedSheet == nil else { return }
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
-        let alert = NSAlert()
-        alert.messageText = "Music \(version)"
-        alert.informativeText = "What’s New in This Version"
-        alert.addButton(withTitle: "Done")
-
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 280))
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
-        let textView = NSTextView(frame: scrollView.contentView.bounds)
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.font = .systemFont(ofSize: 13)
-        textView.textColor = .labelColor
-        textView.textContainerInset = NSSize(width: 10, height: 10)
-        textView.isVerticallyResizable = true
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.setAccessibilityLabel("What’s New in This Version")
-        textView.string = "Loading release notes…"
-        scrollView.documentView = textView
-        alert.accessoryView = scrollView
-        alert.beginSheetModal(for: window) { [weak self] _ in
-            self?.releaseNotesTask?.cancel()
-            self?.releaseNotesTask = nil
+        if let releaseNotesWindow {
+            releaseNotesWindow.makeKeyAndOrderFront(nil)
+            return
         }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 240),
+                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        panel.title = "Music \(version)"
+        panel.titlebarAppearsTransparent = true
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
+
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let notesView = WKWebView(frame: NSRect(x: 20, y: 20, width: 440, height: 200), configuration: configuration)
+        // macOS WebKit otherwise paints an opaque page even with transparent HTML.
+        notesView.setValue(false, forKey: "drawsBackground")
+        notesView.navigationDelegate = self
+        notesView.loadHTMLString(MusicReleaseNotes.document(html: "<p role=\"status\">Loading release notes…</p>"), baseURL: nil)
+        panel.contentView?.addSubview(notesView)
+        releaseNotesWindow = panel
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
         releaseNotesTask = Task { @MainActor in
             let notes = await MusicReleaseNotes.load(version: version)
             guard !Task.isCancelled else { return }
-            textView.string = notes.cached ? "Couldn’t refresh — showing saved release notes.\n\n\(notes.text)" : notes.text
-            textView.scrollToBeginningOfDocument(nil)
+            notesView.loadHTMLString(MusicReleaseNotes.document(html: notes.html, cached: notes.cached), baseURL: nil)
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard notification.object as? NSWindow === releaseNotesWindow else { return }
+        releaseNotesTask?.cancel()
+        releaseNotesTask = nil
+        releaseNotesWindow = nil
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let url = navigationAction.request.url
+        if navigationAction.navigationType == .linkActivated,
+           let url, ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+            NSWorkspace.shared.open(url)
+        }
+        decisionHandler(navigationAction.navigationType == .other && url?.absoluteString == "about:blank" ? .allow : .cancel)
     }
 
     @objc func checkForUpdates() {
