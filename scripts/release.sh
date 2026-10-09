@@ -135,13 +135,29 @@ cp "$feeds"/appcast-*.xml updates/
     (cd updates && shasum -a 256 ./appcast-*.xml)
 } > updates/SHA256SUMS.txt
 python3 tests/check-release.py "$release" "$release_tag"
+python3 - "$repo" "$release_tag" "$version" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+repo, tag, version = sys.argv[1:]
+path = Path("README.md")
+readme = path.read_text()
+for label in ("Apple-Silicon", "Intel"):
+    pattern = re.escape(repo) + rf"/releases/download/[^)\s]+/Music-[^)\s]+-{label}\.dmg"
+    url = f"{repo}/releases/download/{tag}/Music-{version}-{label}.dmg"
+    readme, count = re.subn(pattern, lambda _: url, readme)
+    if count != 1:
+        sys.exit(f"Expected one direct {label} download link in README.md.")
+path.write_text(readme)
+PY
 cat > "$work/PUBLISH.txt" <<TEXT
 GitHub release: $repo/releases/tag/$release_tag
 Upload only these two files from $release to a draft release:
   Music-$version-Apple-Silicon.dmg
   Music-$version-Intel.dmg
 Keep these generated filenames so the appcast download URLs remain valid.
-Publish the release and mark it Latest, then immediately commit and push updates/ to main.
+Publish the release and mark it Latest, then immediately commit and push updates/ and README.md to main.
 Apps read the repository feeds; XML files and checksums stay in updates/.
 The downloads badge counts all release assets, so upload only the two DMGs.
 After publishing: python3 tests/check-release.py --published $release_tag

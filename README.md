@@ -9,9 +9,9 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 ## Download
 
-[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://indradprasetya.github.io/yt-music-webkit/download.html?arch=arm64) For Macs with Apple Silicon chips: M1, M2, M3, and later.
+[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Apple-Silicon.dmg) For Macs with Apple Silicon chips: M1, M2, M3, and later.
 
-[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://indradprasetya.github.io/yt-music-webkit/download.html?arch=x86_64) For Macs with an Intel processor.
+[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Intel.dmg) For Macs with an Intel processor.
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
