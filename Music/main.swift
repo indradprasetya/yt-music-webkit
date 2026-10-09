@@ -94,6 +94,112 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             document.documentElement.append(style);
         }
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+        if (location.hostname === 'music.youtube.com') {
+            const style = document.createElement('style');
+            style.textContent = `
+                ytmusic-app-layout > #content { scrollbar-width:none !important; }
+                ytmusic-app-layout > #content::-webkit-scrollbar { display:none !important; }
+                #music-scrollbar {
+                    position:fixed; z-index:6; width:14px; overflow-x:hidden; overflow-y:scroll;
+                    background:transparent; scrollbar-width:auto; overscroll-behavior:none;
+                    opacity:0; transition:opacity 160ms ease-out; outline:none;
+                }
+                #music-scrollbar:hover, #music-scrollbar:focus-visible, #music-scrollbar.scrolling { opacity:1; }
+                #music-scrollbar:focus-visible { outline:2px solid #aaa; border-radius:9px; }
+                #music-scrollbar::-webkit-scrollbar { width:14px; background:transparent; }
+                #music-scrollbar::-webkit-scrollbar-track { background:transparent; }
+                #music-scrollbar::-webkit-scrollbar-thumb {
+                    min-height:32px; border:3px solid transparent; border-radius:10px;
+                    background:rgba(255,255,255,.45); background-clip:padding-box;
+                }
+                #music-scrollbar::-webkit-scrollbar-thumb:hover { background-color:rgba(255,255,255,.65); }
+                #music-scrollbar::-webkit-scrollbar-thumb:active { background-color:rgba(255,255,255,.8); }
+                #music-scrollbar > div { width:1px; pointer-events:none; }
+                @media (prefers-reduced-motion:reduce) { #music-scrollbar { transition:none; } }
+            `;
+            document.documentElement.append(style);
+            // Reuse WebKit's scrollbar for dragging, track clicks, and keyboard scrolling without reserving a gutter.
+            const bar = document.createElement('div');
+            bar.id = 'music-scrollbar';
+            bar.tabIndex = 0;
+            bar.setAttribute('role', 'region');
+            bar.setAttribute('aria-label', 'Page scrollbar');
+            const spacer = bar.appendChild(document.createElement('div'));
+            document.body.append(bar);
+            let content, scheduled = false, timer, syncedTop = 0;
+            const observer = new ResizeObserver(schedule);
+            const observed = new Set();
+            function reveal() {
+                bar.classList.add('scrolling');
+                clearTimeout(timer);
+                timer = setTimeout(() => bar.classList.remove('scrolling'), 900);
+            }
+            function syncFromPage() {
+                reveal();
+                schedule();
+            }
+            function syncFromBar() {
+                if (!content || bar.scrollTop === syncedTop) return;
+                content.scrollTop = bar.scrollTop;
+                syncedTop = bar.scrollTop;
+                reveal();
+            }
+            bar.addEventListener('scroll', syncFromBar, {passive:true});
+            function schedule() {
+                if (scheduled) return;
+                scheduled = true;
+                requestAnimationFrame(() => {
+                    scheduled = false;
+                    const next = document.querySelector('ytmusic-app-layout > #content');
+                    if (next === content) syncFromBar();
+                    if (next !== content) {
+                        if (content) {
+                            content.removeEventListener('scroll', syncFromPage);
+                        }
+                        observer.disconnect();
+                        observed.clear();
+                        content = next;
+                        if (content) {
+                            content.addEventListener('scroll', syncFromPage, {passive:true});
+                        }
+                    }
+                    if (!content) { bar.hidden = true; return; }
+                    const elements = [content, ...content.children];
+                    for (const element of observed) {
+                        if (!elements.includes(element)) {
+                            observer.unobserve(element);
+                            observed.delete(element);
+                        }
+                    }
+                    for (const element of elements) {
+                        if (!observed.has(element)) {
+                            observer.observe(element);
+                            observed.add(element);
+                        }
+                    }
+                    const rect = content.getBoundingClientRect();
+                    const range = content.scrollHeight - content.clientHeight;
+                    bar.hidden = range <= 0 || rect.height <= 16 || getComputedStyle(content).visibility === 'hidden';
+                    const top = Math.max(0, rect.top) + 8;
+                    bar.style.top = `${top}px`;
+                    bar.style.left = `${Math.min(innerWidth, rect.right) - 18}px`;
+                    bar.style.height = `${Math.max(0, Math.min(innerHeight, rect.bottom) - top - 8)}px`;
+                    spacer.style.height = `${range + bar.clientHeight}px`;
+                    if (bar.scrollTop !== content.scrollTop) bar.scrollTop = content.scrollTop;
+                    syncedTop = bar.scrollTop;
+                });
+            }
+            new MutationObserver(records => {
+                if (records.some(record => !bar.contains(record.target))) schedule();
+            }).observe(document.documentElement, {
+                subtree:true, childList:true, attributes:true, attributeFilter:['style', 'class', 'hidden']
+            });
+            window.addEventListener('resize', schedule, {passive:true});
+            document.addEventListener('load', schedule, true);
+            schedule();
+        }
+        """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
         let safariVersion = Bundle(url: URL(fileURLWithPath: "/Applications/Safari.app"))?

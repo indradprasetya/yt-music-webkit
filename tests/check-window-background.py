@@ -56,6 +56,10 @@ DispatchQueue.main.async {
                 const content = document.querySelector('ytmusic-app-layout > #content');
                 const header = document.querySelector('#nav-bar-background');
                 const guide = document.querySelector('#mini-guide-background');
+                const bar = document.querySelector('#music-scrollbar');
+                const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const check = (condition, message) => { if (!condition) throw new Error(message); };
+                check(!!bar, 'Create the overlay scrollbar');
                 if (!CSS.supports('animation-timeline: --music-titlebar-scroll')) return {supported: false};
                 const samples = [];
                 for (const top of [192, 96, 72, 48, 24, 0, 24, 48, 96, 0]) {
@@ -63,7 +67,50 @@ DispatchQueue.main.async {
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                     samples.push({top: content.scrollTop, header: +getComputedStyle(header).opacity,
                                   guide: +getComputedStyle(guide).opacity});
+                    check(Math.abs(bar.scrollTop - content.scrollTop) < 1, 'Page scrolling updates the thumb');
                 }
+                const bounds = bar.getBoundingClientRect();
+                check(content.clientWidth === innerWidth, 'The gradient reaches the right edge without a gutter');
+                check(bounds.top === 8 && bounds.right === innerWidth - 4,
+                      'Inset the scrollbar below the title bar and away from the window edge');
+                check(document.elementFromPoint(bounds.right - 7, bounds.top + 10) === bar,
+                      'The header must not cover the scrollbar hit area');
+                check(getComputedStyle(bar, '::-webkit-scrollbar-track').backgroundColor === 'rgba(0, 0, 0, 0)',
+                      'Do not paint a black track');
+                check(bar.tabIndex === 0 && !!bar.getAttribute('aria-label'), 'Keep keyboard access and an accessible name');
+                bar.scrollTop = 320;
+                await settle();
+                check(content.scrollTop === 320, 'Moving the scrollbar scrolls the page');
+                const page = content.firstElementChild;
+                page.style.height = '600vh';
+                content.scrollTop = content.scrollHeight;
+                await settle();
+                check(Math.abs(bar.scrollTop - content.scrollTop) < 1, 'Growing content must not reset page scroll');
+                content.style.height = '400px';
+                await settle();
+                check(bar.scrollHeight - bar.clientHeight === content.scrollHeight - content.clientHeight,
+                      'Keep the scroll range correct after resizing');
+                page.style.height = '10px';
+                await settle();
+                check(bar.hidden, 'Hide the scrollbar when the page fits');
+                content.style.height = '';
+                page.style.height = '300vh';
+                await settle();
+                content.style.visibility = 'hidden';
+                await settle();
+                check(bar.hidden, 'Hide the scrollbar while the player covers the page');
+                content.style.visibility = '';
+                const replacement = content.cloneNode(true);
+                content.replaceWith(replacement);
+                await settle();
+                check(!bar.hidden, 'Keep the scrollbar when YouTube replaces its scroller');
+                const detachedTop = content.scrollTop;
+                bar.scrollTop = 240;
+                await settle();
+                check(replacement.scrollTop === 240, 'Bind the scrollbar to the replacement page');
+                check(content.scrollTop === detachedTop, 'Do not scroll the detached page');
+                replacement.replaceWith(content);
+                await settle();
                 return {supported: true, samples,
                         contentRight: content.getBoundingClientRect().left + content.clientWidth,
                         overlayEdges: ['#nav-bar-background', '#nav-bar-divider', 'ytmusic-nav-bar'].map(selector =>
@@ -88,7 +135,7 @@ DispatchQueue.main.async {
                     assert(abs(sample["guide"]! - expected) < 0.02, "Keep the compact sidebar in sync with the header")
                 }
                 timer.invalidate()
-                print("PASS: layout, hit testing, root/nested gutters, resizing, early gradient reveal in both directions, and overscroll containment")
+                print("PASS: layout, hit testing, gutter-free overlay, two-way scrolling, resize/replacement, gradient reveal, and overscroll containment")
                 exit(0)
             }
             return
@@ -172,4 +219,5 @@ with tempfile.TemporaryDirectory(prefix="music-window-check-") as directory:
                     str(root / "Music/MusicUpdates.swift"), str(root / "Music/MusicReleaseNotes.swift"),
                     "-o", str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
-    subprocess.run([str(binary), *sys.argv[1:]], check=True, timeout=20)
+    # Failed assertions must not leave a restore-windows dialog blocking the next run.
+    subprocess.run([str(binary), "-ApplePersistenceIgnoreState", "YES", *sys.argv[1:]], check=True, timeout=20)
