@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Download Music</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2328; background: #ffffff; }
+    body { max-width: 36rem; margin: 16vh auto 0; padding: 0 24px 48px; line-height: 1.6; }
+    h1 { margin: 0 0 16px; font-size: 2rem; line-height: 1.2; }
+    p { margin: 0 0 24px; overflow-wrap: anywhere; }
+    a { color: #0969da; text-underline-offset: 4px; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible { outline: 3px solid #0969da; outline-offset: 4px; }
+    .download { display: inline-block; padding: 12px 20px; border-radius: 6px; background: #0969da; color: #ffffff; font-weight: 600; text-decoration: none; }
+    .download:hover { background: #0550ae; }
+    .download:active { background: #033d8b; }
+    footer { margin-top: 40px; font-size: 0.875rem; }
+    ::selection { color: #ffffff; background: #0969da; }
+    @media (prefers-color-scheme: dark) {
+      :root { color: #f0f6fc; background: #0d1117; }
+      a { color: #58a6ff; }
+      a:focus-visible { outline-color: #58a6ff; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Download Music</h1>
+    <p id="status" role="status">Choose an installer from the latest release.</p>
+    <a id="download" class="download" href="https://github.com/indradprasetya/yt-music-webkit/releases/latest">View GitHub Releases</a>
+    <noscript><p>Automatic downloads need JavaScript. Use GitHub Releases to choose the installer for your Mac.</p></noscript>
+  </main>
+  <footer><a href="https://github.com/indradprasetya/yt-music-webkit">Back to the project</a></footer>
+  <script>
+    (async () => {
+      const repo = 'https://github.com/indradprasetya/yt-music-webkit';
+      const releases = `${repo}/releases/latest`;
+      const arch = new URLSearchParams(location.search).get('arch');
+      const suffix = arch === 'arm64' ? 'Apple-Silicon' : arch === 'x86_64' ? 'Intel' : null;
+      if (!suffix) {
+        location.replace(releases);
+        return;
+      }
+
+      const label = suffix.replace('-', ' ');
+      const status = document.getElementById('status');
+      const download = document.getElementById('download');
+      status.textContent = `Finding the latest installer for ${label}…`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch('https://api.github.com/repos/indradprasetya/yt-music-webkit/releases/latest', {
+          headers: { Accept: 'application/vnd.github+json' },
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Release unavailable');
+        const release = await response.json();
+        const asset = release.assets.find(asset =>
+          typeof asset.name === 'string' && asset.name.startsWith('Music-') && asset.name.endsWith(`-${suffix}.dmg`));
+        if (!asset || typeof asset.browser_download_url !== 'string' ||
+            !asset.browser_download_url.startsWith(`${repo}/releases/download/`)) {
+          throw new Error('Installer unavailable');
+        }
+        download.href = asset.browser_download_url;
+        download.textContent = `Download for ${label}`;
+        status.textContent = `${asset.name} is ready. If your download does not start, use the button below.`;
+        location.replace(asset.browser_download_url);
+      } catch {
+        status.textContent = 'We couldn’t start your download. Opening GitHub Releases so you can choose your installer…';
+        location.replace(releases);
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
+  </script>
+</body>
+</html>
