@@ -103,9 +103,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                 #music-scrollbar {
                     position:fixed; z-index:6; width:14px; overflow-x:hidden; overflow-y:scroll;
                     background:transparent; scrollbar-width:auto; overscroll-behavior:none;
-                    opacity:0; transition:opacity 160ms ease-out; outline:none;
+                    opacity:1; outline:none;
                 }
-                #music-scrollbar:hover, #music-scrollbar:focus-visible, #music-scrollbar.scrolling { opacity:1; }
                 #music-scrollbar:focus-visible { outline:2px solid #aaa; border-radius:9px; }
                 #music-scrollbar::-webkit-scrollbar { width:14px; background:transparent; }
                 #music-scrollbar::-webkit-scrollbar-track { background:transparent; }
@@ -116,7 +115,6 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                 #music-scrollbar::-webkit-scrollbar-thumb:hover { background-color:rgba(255,255,255,.65); }
                 #music-scrollbar::-webkit-scrollbar-thumb:active { background-color:rgba(255,255,255,.8); }
                 #music-scrollbar > div { width:1px; pointer-events:none; }
-                @media (prefers-reduced-motion:reduce) { #music-scrollbar { transition:none; } }
             `;
             document.documentElement.append(style);
             // Reuse WebKit's scrollbar for dragging, track clicks, and keyboard scrolling without reserving a gutter.
@@ -127,23 +125,13 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             bar.setAttribute('aria-label', 'Page scrollbar');
             const spacer = bar.appendChild(document.createElement('div'));
             document.body.append(bar);
-            let content, scheduled = false, timer, syncedTop = 0;
+            let content, scheduled = false, syncedTop = 0;
             const observer = new ResizeObserver(schedule);
             const observed = new Set();
-            function reveal() {
-                bar.classList.add('scrolling');
-                clearTimeout(timer);
-                timer = setTimeout(() => bar.classList.remove('scrolling'), 900);
-            }
-            function syncFromPage() {
-                reveal();
-                schedule();
-            }
             function syncFromBar() {
                 if (!content || bar.scrollTop === syncedTop) return;
                 content.scrollTop = bar.scrollTop;
                 syncedTop = bar.scrollTop;
-                reveal();
             }
             bar.addEventListener('scroll', syncFromBar, {passive:true});
             function schedule() {
@@ -155,13 +143,13 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                     if (next === content) syncFromBar();
                     if (next !== content) {
                         if (content) {
-                            content.removeEventListener('scroll', syncFromPage);
+                            content.removeEventListener('scroll', schedule);
                         }
                         observer.disconnect();
                         observed.clear();
                         content = next;
                         if (content) {
-                            content.addEventListener('scroll', syncFromPage, {passive:true});
+                            content.addEventListener('scroll', schedule, {passive:true});
                         }
                     }
                     if (!content) { bar.hidden = true; return; }
