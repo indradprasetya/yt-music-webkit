@@ -50,6 +50,49 @@ DispatchQueue.main.async {
     _ = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
         if Date() > deadline { fatalError("Window layout did not settle at stage \(stage)") }
         guard !web.isLoading, !checking else { return }
+        if stage == 3 {
+            checking = true
+            web.callAsyncJavaScript("""
+                const content = document.querySelector('ytmusic-app-layout > #content');
+                const header = document.querySelector('#nav-bar-background');
+                const guide = document.querySelector('#mini-guide-background');
+                if (!CSS.supports('animation-timeline: --music-titlebar-scroll')) return {supported: false};
+                const samples = [];
+                for (const top of [192, 96, 72, 48, 24, 0, 24, 48, 96, 0]) {
+                    content.scrollTop = top;
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    samples.push({top: content.scrollTop, header: +getComputedStyle(header).opacity,
+                                  guide: +getComputedStyle(guide).opacity});
+                }
+                return {supported: true, samples,
+                        contentRight: content.getBoundingClientRect().left + content.clientWidth,
+                        overlayEdges: ['#nav-bar-background', '#nav-bar-divider', 'ytmusic-nav-bar'].map(selector =>
+                            document.querySelector(selector).getBoundingClientRect().right),
+                        rootOverscroll: getComputedStyle(document.documentElement).overscrollBehaviorY,
+                        contentOverscroll: getComputedStyle(content).overscrollBehaviorY};
+                """, arguments: [:], in: nil, in: .defaultClient) { result in
+                guard case .success(let value) = result, let report = value as? [String: Any] else {
+                    fatalError("Scroll appearance check failed: \(result)")
+                }
+                assert(report["supported"] as? Bool == true, "Run the scroll-driven appearance check on current WebKit")
+                assert(report["rootOverscroll"] as? String == "none")
+                assert(report["contentOverscroll"] as? String == "none", "Do not expose a black gap when reaching the edge")
+                for edge in report["overlayEdges"] as! [Double] {
+                    assert(abs(edge - (report["contentRight"] as! Double)) < 0.5,
+                           "Header layers must leave the scrollbar visible and clickable")
+                }
+                for sample in report["samples"] as! [[String: Double]] {
+                    let expected = min(1, sample["top"]! / 96)
+                    assert(abs(sample["header"]! - expected) < 0.02,
+                           "Reveal the gradient before reaching the top, in both scroll directions: \(sample)")
+                    assert(abs(sample["guide"]! - expected) < 0.02, "Keep the compact sidebar in sync with the header")
+                }
+                timer.invalidate()
+                print("PASS: layout, hit testing, root/nested gutters, resizing, early gradient reveal in both directions, and overscroll containment")
+                exit(0)
+            }
+            return
+        }
         let expectedGutter: CGFloat = stage == 2 ? 0 : 18
         let gutter = web.bounds.width * (1 - background.contentWidthFraction)
         guard abs(gutter - expectedGutter) < 0.5 else { return }
@@ -84,9 +127,26 @@ DispatchQueue.main.async {
                     _, error in assert(error == nil); checking = false
                 }
             } else {
-                timer.invalidate()
-                print("PASS: controls and scrollbar remain below the title bar; root/nested gutters, resize, and hit testing")
-                exit(0)
+                stage = 3
+                checking = false
+                web.loadHTMLString("""
+                    <!doctype html><html><style>
+                    html, body { margin:0; background:black; overflow:hidden }
+                    ytmusic-app-layout { display:block }
+                    #content { height:100vh; overflow-y:scroll }
+                    #nav-bar-background, #mini-guide-background {
+                        position:fixed; top:0; left:0; height:64px; width:100%;
+                        background:black; opacity:1; transition:opacity 0.2s;
+                    }
+                    #mini-guide-background { width:72px; height:100vh }
+                    #nav-bar-divider { position:fixed; top:64px; left:0; width:100%; height:1px }
+                    ytmusic-nav-bar { display:block; position:fixed; top:0; left:0; width:100%; height:64px }
+                    </style><body><ytmusic-app-layout>
+                    <div id="nav-bar-background"></div><div id="nav-bar-divider"></div>
+                    <ytmusic-nav-bar></ytmusic-nav-bar><div id="mini-guide-background"></div>
+                    <main id="content"><div style="height:300vh;background:linear-gradient(red,blue)">Scroll check</div></main>
+                    </ytmusic-app-layout></body></html>
+                    """, baseURL: URL(string: "https://music.youtube.com/"))
             }
         }
     }

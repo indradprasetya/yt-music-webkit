@@ -54,12 +54,44 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                     const width = `${contentWidth}/${innerWidth}`;
                     if (width === previousWidth) return;
                     previousWidth = width;
+                    document.documentElement.style.setProperty('--music-header-content-width', `${contentWidth}px`);
                     window.webkit.messageHandlers.titlebarContentWidth.postMessage({contentWidth, viewportWidth: innerWidth});
                 });
             }
-            new MutationObserver(update).observe(document.documentElement, {subtree: true, childList: true});
+            new MutationObserver(update).observe(document.documentElement, {
+                subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'class', 'hidden']
+            });
             window.addEventListener('resize', update, {passive: true});
             update();
+        }
+        """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+        if (location.hostname === 'music.youtube.com') {
+            const style = document.createElement('style');
+            style.textContent = `
+                /* Rubber-banding must not expose a black gap along the replicated edge. */
+                html, body, ytmusic-app-layout > #content { overscroll-behavior-y: none !important; }
+                /* Keep header paint and hit testing out of the scrollbar gutter. */
+                ytmusic-app-layout > #nav-bar-background,
+                ytmusic-app-layout > #nav-bar-divider,
+                ytmusic-app-layout > ytmusic-nav-bar {
+                    width: var(--music-header-content-width, 100%) !important;
+                }
+                /* shortcut: Older WebKit keeps YouTube's fade; add a fallback if it needs the gradual reveal. */
+                @supports (animation-timeline: --music-titlebar-scroll) and (timeline-scope: --music-titlebar-scroll) {
+                    ytmusic-app-layout { timeline-scope: --music-titlebar-scroll; }
+                    ytmusic-app-layout > #content { scroll-timeline: --music-titlebar-scroll block; }
+                    ytmusic-app-layout > #nav-bar-background,
+                    ytmusic-app-layout > #mini-guide-background {
+                        animation: music-titlebar-fade linear both;
+                        animation-timeline: --music-titlebar-scroll;
+                        animation-range: 0px 96px;
+                        transition: none !important;
+                    }
+                    @keyframes music-titlebar-fade { from { opacity: 0; } to { opacity: 1; } }
+                }
+            `;
+            document.documentElement.append(style);
         }
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         webView = WKWebView(frame: .zero, configuration: configuration)
