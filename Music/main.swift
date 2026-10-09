@@ -1,7 +1,7 @@
 import AppKit
 import WebKit
 
-final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate {
+final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var updates: MusicUpdates!
@@ -21,6 +21,47 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             };
         }
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        configuration.userContentController.add(self, contentWorld: .defaultClient, name: "titlebarContentWidth")
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+        if (location.hostname === 'music.youtube.com') {
+            let scheduled = false;
+            let previousWidth = '';
+            const resizeObserver = new ResizeObserver(update);
+            const observed = new Set();
+            function update() {
+                if (scheduled) return;
+                scheduled = true;
+                requestAnimationFrame(() => {
+                    scheduled = false;
+                    let contentWidth = document.documentElement.clientWidth;
+                    const elements = document.elementsFromPoint(innerWidth - 1, 0);
+                    for (const element of observed) {
+                        if (!elements.includes(element)) {
+                            resizeObserver.unobserve(element);
+                            observed.delete(element);
+                        }
+                    }
+                    for (const element of elements) {
+                        if (!observed.has(element)) {
+                            observed.add(element);
+                            resizeObserver.observe(element);
+                        }
+                        if (element.scrollHeight > element.clientHeight && element.offsetWidth > element.clientWidth) {
+                            contentWidth = Math.min(contentWidth,
+                                element.getBoundingClientRect().left + element.clientLeft + element.clientWidth);
+                        }
+                    }
+                    const width = `${contentWidth}/${innerWidth}`;
+                    if (width === previousWidth) return;
+                    previousWidth = width;
+                    window.webkit.messageHandlers.titlebarContentWidth.postMessage({contentWidth, viewportWidth: innerWidth});
+                });
+            }
+            new MutationObserver(update).observe(document.documentElement, {subtree: true, childList: true});
+            window.addEventListener('resize', update, {passive: true});
+            update();
+        }
+        """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
         let safariVersion = Bundle(url: URL(fileURLWithPath: "/Applications/Safari.app"))?
@@ -30,7 +71,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
 
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -41,12 +82,24 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             window?.backgroundColor = view.underPageBackgroundColor
         }
         window.center()
-        window.contentView = webView
+        window.contentView = TitlebarBackgroundView(webView: webView)
         window.delegate = self
         updates = MusicUpdates()
         updates.attach(to: window)
         window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(webView)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "titlebarContentWidth", message.frameInfo.isMainFrame,
+              message.frameInfo.securityOrigin.host == "music.youtube.com",
+              let widths = message.body as? [String: Double],
+              let contentWidth = widths["contentWidth"], let viewportWidth = widths["viewportWidth"],
+              contentWidth.isFinite, viewportWidth.isFinite,
+              contentWidth > 0, contentWidth <= viewportWidth,
+              let background = window.contentView as? TitlebarBackgroundView else { return }
+        background.contentWidthFraction = CGFloat(contentWidth / viewportWidth)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -69,6 +122,63 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             webView.load(URLRequest(url: url))
         }
         return nil
+    }
+}
+
+final class TitlebarBackgroundView: NSView {
+    let webView: WKWebView
+    var contentWidthFraction: CGFloat = 1 { didSet { needsLayout = true } }
+    private let verticalExtension = NSView()
+    private let contentMask = CAShapeLayer()
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+        wantsLayer = true
+        verticalExtension.layer = CAReplicatorLayer()
+        verticalExtension.wantsLayer = true
+        verticalExtension.layer?.mask = contentMask
+        addSubview(verticalExtension)
+        verticalExtension.addSubview(webView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func makeBackingLayer() -> CALayer { CAReplicatorLayer() }
+
+    override func layout() {
+        super.layout()
+        guard let window, let horizontal = layer as? CAReplicatorLayer,
+              let vertical = verticalExtension.layer as? CAReplicatorLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        verticalExtension.frame = bounds
+        webView.frame = convert(window.contentLayoutRect, from: nil)
+        let top = webView.frame.maxY
+        let titlebarHeight = max(0, bounds.maxY - top)
+        let contentWidth = max(1, bounds.width * contentWidthFraction)
+        let gutterWidth = bounds.width - contentWidth
+
+        // Replicate the live edge in the compositor, below the original page, with no snapshot delay.
+        vertical.instanceCount = titlebarHeight > 0 ? 2 : 1
+        var transform = CATransform3DMakeScale(1, titlebarHeight, 1)
+        // Use the second point below the edge to skip YouTube Music's 1-point top border.
+        transform.m42 = top - titlebarHeight * (top - 2)
+        transform.m43 = -1
+        vertical.instanceTransform = transform
+        let path = CGMutablePath()
+        path.addRect(webView.frame)
+        path.addRect(CGRect(x: bounds.minX, y: top, width: contentWidth, height: titlebarHeight))
+        contentMask.path = path
+
+        // Extend the last content pixel across the gutter without copying the scrollbar above the page.
+        horizontal.instanceCount = gutterWidth > 0 && titlebarHeight > 0 ? 2 : 1
+        var edgeTransform = CATransform3DMakeScale(max(1, gutterWidth), 1, 1)
+        edgeTransform.m41 = contentWidth - max(1, gutterWidth) * (contentWidth - 1)
+        edgeTransform.m43 = -1
+        horizontal.instanceTransform = edgeTransform
+        horizontal.masksToBounds = true
+        CATransaction.commit()
     }
 }
 
