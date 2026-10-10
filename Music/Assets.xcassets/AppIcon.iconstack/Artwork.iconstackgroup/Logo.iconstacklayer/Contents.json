@@ -41,7 +41,7 @@
         "icon-studio-localization": "unspecified",
         "value": {
           "matching-style": "fully-qualified-name",
-          "name": "Dark",
+          "name": "TintedLight",
           "type": "image-set"
         }
       }
@@ -52,10 +52,10 @@
         "icon-studio-idiom": "macOS",
         "icon-studio-localization": "unspecified",
         "value": {
-          "origin.x": -128,
-          "origin.y": -128,
-          "size.width": 1280,
-          "size.height": 1280
+          "origin.x": 0,
+          "origin.y": 0,
+          "size.width": 1024,
+          "size.height": 1024
         }
       }
     ],

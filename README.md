@@ -1,10 +1,10 @@
-# Music — YouTube Music for macOS
+# Music — Open Source Web Wrapper for YouTube Music
 
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Findradprasetya%2Fyt-music-webkit%2Freleases%2Flatest&query=%24.tag_name&label=version&color=0088cc&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
 [![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](#download)
 [![Support my app on Ko-fi](https://img.shields.io/badge/Support_my_app-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/indradprasetya)
 
-Music brings YouTube Music to macOS in a lightweight app built with Swift and WebKit for Apple Silicon and Intel Macs. Enjoy your favorite tracks while you work or browse, without worrying about accidentally closing a browser tab. Your music keeps playing in the background, even when you close the app window.
+Music is an open-source macOS web wrapper for YouTube Music built with Swift and WebKit for Apple Silicon and Intel Macs. Enjoy your favorite tracks while you work or browse, without worrying about accidentally closing a browser tab. Your music keeps playing in the background, even when you close the app window.
 
 Designed with privacy and security in mind, Music has no developer-operated backend and sends no personal data, analytics, or listening history to the developer. Official installers are signed with an Apple Developer ID and notarized by Apple. See [Privacy](#privacy) for details.
 
@@ -59,4 +59,4 @@ When distributing Music or a modified version, provide the corresponding source 
 
 Third-party components retain their own licenses. [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) contains the notices for Sparkle and its bundled components. Both license files are included in the app's `Contents/Resources` directory.
 
-Music is not affiliated with or endorsed by Google or YouTube. YouTube Music, its branding, and the content accessed through the service are not covered by this project's license and remain subject to their respective owners' rights and the [YouTube Terms of Service](https://www.youtube.com/static?template=terms).
+Music is a third-party app and is not affiliated with, endorsed by, or sponsored by Google LLC or YouTube. YouTube Music, its branding, and the content accessed through the service are not covered by this project's license and remain subject to their respective owners' rights and the [YouTube Terms of Service](https://www.youtube.com/static?template=terms).
