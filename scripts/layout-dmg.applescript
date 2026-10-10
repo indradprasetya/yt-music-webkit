@@ -21,6 +21,9 @@ on run arguments
         delay 1
         set diskWindow to make new Finder window to diskFolder
         delay 3
+        -- Hiding the toolbar can shift icons; restore their positions after the window settles.
+        set position of item "Music.app" of diskWindow to {160, 185}
+        set position of item "Applications" of diskWindow to {480, 185}
         close diskWindow
         delay 2
     end tell

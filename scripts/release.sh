@@ -105,7 +105,9 @@ for arch in arm64 x86_64; do
     mounted=""
     codesign --sign "$identity" --timestamp "$dmg"
     xcrun notarytool submit "$dmg" --keychain-profile "$profile" --output-format json > "$work/submission-$arch.json"
-    printf 'Submitted %s for notarization\n' "$label"
+    submission=$(plutil -extract id raw "$work/submission-$arch.json")
+    printf 'Submitted %s for notarization: %s\n' "$label" "$submission"
+    printf 'Check status: DEVELOPER_DIR=%q xcrun notarytool info %q --keychain-profile %q\n' "$DEVELOPER_DIR" "$submission" "$profile"
 done
 
 sparkle="$PWD/dist/updater-build/SourcePackages/artifacts/sparkle/Sparkle/bin"
