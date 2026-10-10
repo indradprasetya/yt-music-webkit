@@ -8,6 +8,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var backgroundObservation: NSKeyValueObservation?
     private var playbackState: [String: Bool] = [:]
     private let playbackMenu = NSMenu(title: "Controls")
+    private let repeatMenu = NSMenu(title: "Repeat")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
@@ -19,6 +20,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         if (location.protocol === 'https:' && location.hostname === 'music.youtube.com' && navigator.mediaSession) {
             const handlers = new Map();
             let lastState = '';
+            let changingQueue = false;
+            const repeatModes = {repeatoff: 'NONE', repeatall: 'ALL', repeatone: 'ONE'};
             const media = () => {
                 const elements = [...document.querySelectorAll('video, audio')];
                 return elements.find(element => !element.paused && !element.ended) || elements[0];
@@ -29,11 +32,25 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                 return player && ['getVolume', 'setVolume', 'isMuted', 'mute', 'unMute'].every(method =>
                     typeof player[method] === 'function') && Number.isFinite(player.getVolume()) ? player : null;
             }
+            // shortcut: These queue fields and button classes belong to YouTube; revisit if its player UI changes.
+            function queueState() {
+                const app = document.querySelector('ytmusic-app');
+                try { return typeof app?.getState === 'function' ? app.getState()?.queue : null; }
+                catch { return null; }
+            }
+            function queueButton(action) {
+                const name = action === 'shuffle' ? 'Shuffle' : 'Repeat';
+                return [...document.querySelectorAll(`ytmusic-wiz-player-controls .ytmusicPlayerControls${name}Button button, ytmusic-player-bar .${action}`)]
+                    .find(button => !button.disabled && !button.closest('[hidden], [disabled], [aria-disabled="true"], [aria-hidden="true"]')
+                        && button.getClientRects().length > 0);
+            }
             function update(force = false) {
                 const player = media();
                 const ready = !!player && player.readyState > 0 && !player.error;
                 const audio = volumeControls();
                 const muted = audio ? audio.isMuted() : !!player?.muted;
+                const queue = queueState();
+                const repeat = ready && !changingQueue && Object.values(repeatModes).includes(queue?.repeatMode) && !!queueButton('repeat');
                 let focused = document.activeElement;
                 while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
                 const state = {
@@ -45,6 +62,14 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                     volumeup: ready && !!audio && (audio.getVolume() < 100 || muted),
                     volumedown: ready && !!audio && audio.getVolume() > 0,
                     mute: ready && !!audio,
+                    shuffle: ready && !changingQueue && typeof queue?.shuffleEnabled === 'boolean' && !!queueButton('shuffle'),
+                    shuffled: queue?.shuffleEnabled === true,
+                    repeatoff: repeat,
+                    repeatall: repeat,
+                    repeatone: repeat,
+                    repeatoffSelected: queue?.repeatMode === 'NONE',
+                    repeatallSelected: queue?.repeatMode === 'ALL',
+                    repeatoneSelected: queue?.repeatMode === 'ONE',
                     editing: !!focused && (focused.isContentEditable || focused.matches('input, textarea, select, iframe, [role="textbox"]'))
                 };
                 const serialized = JSON.stringify(state);
@@ -58,7 +83,34 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                     const player = media();
                     if (!player || player.readyState === 0 || player.error) return false;
                     try {
-                        if (['volumeup', 'volumedown', 'mute'].includes(action)) {
+                        if (action === 'shuffle' || Object.hasOwn(repeatModes, action)) {
+                            if (changingQueue) return false;
+                            changingQueue = true;
+                            try {
+                                update();
+                                if (action === 'shuffle') {
+                                    const before = queueState()?.shuffleEnabled;
+                                    const button = queueButton('shuffle');
+                                    if (typeof before !== 'boolean' || !button) return false;
+                                    button.click();
+                                    await new Promise(resolve => setTimeout(resolve, 0));
+                                    return queueState()?.shuffleEnabled === !before;
+                                }
+                                // Follow YouTube's cycle, re-reading state and the button after each render.
+                                for (let clicks = 0; clicks < 2; clicks++) {
+                                    const before = queueState()?.repeatMode;
+                                    const button = queueButton('repeat');
+                                    if (!Object.values(repeatModes).includes(before) || !button) return false;
+                                    if (before === repeatModes[action]) return true;
+                                    button.click();
+                                    await new Promise(resolve => setTimeout(resolve, 0));
+                                    if (queueState()?.repeatMode === before) return false;
+                                }
+                                return queueState()?.repeatMode === repeatModes[action];
+                            } finally {
+                                changingQueue = false;
+                            }
+                        } else if (['volumeup', 'volumedown', 'mute'].includes(action)) {
                             const audio = volumeControls();
                             if (!audio) return false;
                             // Keep the website's slider, saved volume, and loudness normalization in sync.
@@ -91,11 +143,13 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             for (const event of ['DOMContentLoaded', 'loadedmetadata', 'loadstart', 'emptied', 'play', 'pause', 'ended', 'volumechange', 'error', 'focusin', 'focusout']) {
                 document.addEventListener(event, () => queueMicrotask(update), true);
             }
-            // Refresh availability when YouTube mounts or replaces its player.
+            // Follow website toggles and replacement controls without polling.
+            const controls = '#movie_player, ytmusic-wiz-player-controls, ytmusic-player-bar';
             new MutationObserver(records => {
-                if (records.some(({target, addedNodes}) => target.closest?.('#movie_player')
-                    || [...addedNodes].some(node => node.matches?.('#movie_player') || node.querySelector?.('#movie_player')))) update();
-            }).observe(document, {subtree: true, childList: true});
+                if (records.some(({target, addedNodes, removedNodes}) => target.closest?.(controls)
+                    || [...addedNodes, ...removedNodes].some(node => node.matches?.(controls) || node.querySelector?.(controls)))) update();
+            }).observe(document, {subtree: true, childList: true, attributes: true,
+                attributeFilter: ['aria-pressed', 'aria-label', 'aria-disabled', 'disabled', 'hidden']});
             update();
         }
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -305,6 +359,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             playbackState = state
             (NSApp.mainMenu as? MusicMenu)?.editing = state["editing"] ?? true
             playbackMenu.update()
+            repeatMenu.update()
             return
         }
         guard message.name == "titlebarContentWidth", message.frameInfo.isMainFrame,
@@ -370,6 +425,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             guard let action = menuItem.representedObject as? String else { return false }
             if action == "playpause" { menuItem.title = playbackState["paused"] == false ? "Pause" : "Play" }
             if action == "mute" { menuItem.title = playbackState["muted"] == true ? "Unmute" : "Mute" }
+            if action == "shuffle" { menuItem.state = playbackState["shuffled"] == true ? .on : .off }
+            if action.hasPrefix("repeat") { menuItem.state = playbackState[action + "Selected"] == true ? .on : .off }
             return musicURL != nil && playbackState[action] == true
         default: return true
         }
@@ -379,6 +436,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         playbackState = [:]
         (NSApp.mainMenu as? MusicMenu)?.editing = true
         playbackMenu.update()
+        repeatMenu.update()
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { resetPlayback() }
@@ -428,13 +486,19 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
 
         for (title, action, key) in [("Play", "playpause", " "), ("Next Track", "nexttrack", "\u{F703}"),
                                      ("Previous Track", "previoustrack", "\u{F702}"), ("Volume Up", "volumeup", "\u{F700}"),
-                                     ("Volume Down", "volumedown", "\u{F701}"), ("Mute", "mute", "")] {
-            if action == "nexttrack" || action == "volumeup" { playbackMenu.addItem(.separator()) }
+                                     ("Volume Down", "volumedown", "\u{F701}"), ("Mute", "mute", ""), ("Shuffle", "shuffle", "")] {
+            if action == "nexttrack" || action == "volumeup" || action == "shuffle" { playbackMenu.addItem(.separator()) }
             let item = playbackMenu.addItem(withTitle: title, action: #selector(controlPlayback(_:)), keyEquivalent: key)
             item.target = self
             item.representedObject = action
             if action == "playpause" { item.keyEquivalentModifierMask = [] }
         }
+        for (title, action) in [("Off", "repeatoff"), ("All", "repeatall"), ("One", "repeatone")] {
+            let item = repeatMenu.addItem(withTitle: title, action: #selector(controlPlayback(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = action
+        }
+        playbackMenu.addItem(withTitle: "Repeat", action: nil, keyEquivalent: "").submenu = repeatMenu
 
         let windows = NSMenu(title: "Window")
         windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

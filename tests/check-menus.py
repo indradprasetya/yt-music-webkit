@@ -39,13 +39,29 @@ Task { @MainActor in
     let play = playbackMenu.items.first { $0.representedObject as? String == "playpause" }!
     let next = playbackMenu.items.first { $0.representedObject as? String == "nexttrack" }!
     let mute = playbackMenu.items.first { $0.representedObject as? String == "mute" }!
+    let shuffle = playbackMenu.items.first { $0.representedObject as? String == "shuffle" }!
+    let repeatMenu = playbackMenu.items.first { $0.title == "Repeat" }!.submenu!
+    assert(repeatMenu.items.map(\.title) == ["Off", "All", "One"])
     assert(!validateMenuItem(play), "Disable playback before the player is ready")
-    webView.loadHTMLString("<html><body><div id='movie_player'></div><video></video><input id='search'><div id='editor' contenteditable='true'></div></body></html>",
+    assert(!validateMenuItem(shuffle) && !validateMenuItem(repeatMenu.items[0]))
+    webView.loadHTMLString("<html><body><ytmusic-app></ytmusic-app><div id='movie_player'></div><video></video><ytmusic-wiz-player-controls><div class='ytmusicPlayerControlsShuffleButton'><button aria-label='Acak' aria-pressed='false'>Shuffle</button></div><div class='ytmusicPlayerControlsRepeatButton'><button aria-label='Ulangi' aria-pressed='false'>Repeat</button></div></ytmusic-wiz-player-controls><input id='search'><div id='editor' contenteditable='true'></div></body></html>",
                           baseURL: URL(string: "https://music.youtube.com/"))
     await waitFor { !webView.isLoading && webView.url?.host == "music.youtube.com" }
     _ = await js("""
         window.testPaused = true;
         window.calls = [];
+        window.queue = {shuffleEnabled: false, repeatMode: 'NONE'};
+        document.querySelector('ytmusic-app').getState = () => ({queue});
+        document.querySelector('.ytmusicPlayerControlsShuffleButton button').onclick = event => {
+            queue.shuffleEnabled = !queue.shuffleEnabled;
+            event.currentTarget.setAttribute('aria-pressed', queue.shuffleEnabled);
+        };
+        document.querySelector('.ytmusicPlayerControlsRepeatButton button').onclick = event => {
+            const modes = ['NONE', 'ALL', 'ONE'];
+            queue.repeatMode = modes[(modes.indexOf(queue.repeatMode) + 1) % modes.length];
+            event.currentTarget.setAttribute('aria-pressed', queue.repeatMode !== 'NONE');
+            event.currentTarget.setAttribute('aria-label', queue.repeatMode);
+        };
         const video = document.querySelector('video');
         const player = document.querySelector('#movie_player');
         let volume = 100;
@@ -83,6 +99,23 @@ Task { @MainActor in
     assert(volume == 0.5)
     let calls = await js("window.calls") as! [String]
     assert(calls == ["play", "nexttrack"], "Native menus must dispatch the registered website callbacks")
+    assert(validateMenuItem(shuffle) && shuffle.state == .off)
+    assert(validateMenuItem(repeatMenu.items[0]) && repeatMenu.items[0].state == .on)
+    assert(NSApp.sendAction(shuffle.action!, to: shuffle.target, from: shuffle))
+    await waitFor { self.playbackState["shuffled"] == true }
+    assert(shuffle.state == .on)
+    for index in [2, 1, 0] {
+        let item = repeatMenu.items[index]
+        assert(NSApp.sendAction(item.action!, to: item.target, from: item))
+        await waitFor { self.playbackState[(item.representedObject as! String) + "Selected"] == true && self.playbackState["repeatall"] == true }
+        assert(item.state == .on && repeatMenu.items.filter { $0.state == .on }.count == 1)
+    }
+    _ = await js("document.querySelector('.ytmusicPlayerControlsShuffleButton button').click(); document.querySelector('.ytmusicPlayerControlsRepeatButton button').click()")
+    await waitFor { self.playbackState["shuffled"] == false && self.playbackState["repeatallSelected"] == true }
+    assert(shuffle.state == .off && repeatMenu.items[1].state == .on, "Website clicks update native checkmarks")
+    _ = await js("document.querySelector('ytmusic-wiz-player-controls').remove()")
+    await waitFor { self.playbackState["shuffle"] == false && self.playbackState["repeatall"] == false }
+    assert(!validateMenuItem(shuffle) && !validateMenuItem(repeatMenu.items[1]))
 
     @MainActor func key(_ value: String, _ modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
@@ -143,6 +176,8 @@ Task { @MainActor in
     await waitFor { !webView.isLoading && webView.url?.host == "accounts.google.com" }
     assert(!validateMenuItem(file.items[0]), "Do not export login URLs")
     assert(!validateMenuItem(play) && menu.editing, "Navigation resets playback")
+    assert(!validateMenuItem(shuffle) && shuffle.state == .off)
+    assert(!validateMenuItem(repeatMenu.items[1]) && repeatMenu.items[1].state == .off)
     _ = await js("webkit.messageHandlers.playbackState.postMessage({playpause:true,editing:false}); null")
     try! await Task.sleep(nanoseconds: 100_000_000)
     assert(!validateMenuItem(play) && menu.editing, "Ignore messages from the login origin")

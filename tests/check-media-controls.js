@@ -19,20 +19,30 @@ let mediaSession = new MediaSession();
 const document = new EventTarget();
 let elements = [];
 let audio = null;
+let queue = null;
+let shuffleButton = null;
+let repeatButton = null;
 document.querySelector = selector => {
+    if (selector === 'ytmusic-app') return { getState: () => ({queue}) };
     assert.equal(selector, '#movie_player', 'Volume controls must not depend on the old player-bar layout');
     return audio;
 };
-document.querySelectorAll = () => elements;
+document.querySelectorAll = selector => {
+    if (selector === 'video, audio') return elements;
+    if (selector.includes('ShuffleButton')) return shuffleButton ? [shuffleButton] : [];
+    assert(selector.includes('RepeatButton'));
+    return repeatButton ? [repeatButton] : [];
+};
 document.activeElement = null;
 const messages = [];
 let controlsChanged;
+let observedAttributes;
 const window = { webkit: { messageHandlers: { playbackState: { postMessage: state => messages.push(state) } } } };
 const install = (hostname, navigator, protocol = 'https:') => runInNewContext(script, {
-    location: { hostname, protocol }, navigator, MediaSession, document, window, queueMicrotask, Event,
+    location: { hostname, protocol }, navigator, MediaSession, document, window, queueMicrotask, Event, setTimeout,
     MutationObserver: class {
         constructor(callback) { controlsChanged = callback; }
-        observe() {}
+        observe(target, options) { observedAttributes = options.attributeFilter; }
     },
 });
 
@@ -160,8 +170,88 @@ console.log('PASS: first playback and later tracks keep next/previous controls w
     audio = { ...controls, getVolume: () => NaN };
     assert.equal(await bridge.run('volumeup'), false, 'Do not write invalid volume values');
     audio = controls;
-    controlsChanged([{ target: { closest: () => true }, addedNodes: [] }]);
+    controlsChanged([{ target: { closest: () => true }, addedNodes: [], removedNodes: [] }]);
     assert.equal(state().mute, true, 'Enable a late-mounted player API without another media event');
+
+    assert.equal(state().shuffle, false);
+    assert.equal(state().repeatall, false);
+    assert.equal(await bridge.run('repeatone'), false, 'Missing queue state cannot enable repeat');
+    queue = {shuffleEnabled: false, repeatMode: 'NONE'};
+    const button = click => ({
+        disabled: false, hidden: false, blocked: false,
+        closest() { return this.blocked; },
+        getClientRects() { return this.hidden ? [] : [{}]; },
+        click,
+    });
+    let repeatClicks = 0;
+    const cycleRepeat = () => {
+        repeatClicks++;
+        const modes = ['NONE', 'ALL', 'ONE'];
+        queue.repeatMode = modes[(modes.indexOf(queue.repeatMode) + 1) % modes.length];
+        repeatButton = button(cycleRepeat); // YouTube may replace the button after a click.
+    };
+    shuffleButton = button(() => { queue.shuffleEnabled = !queue.shuffleEnabled; });
+    repeatButton = button(cycleRepeat);
+    const webChanged = () => controlsChanged([{target: {closest: () => true}, addedNodes: [], removedNodes: []}]);
+    for (const attr of ['aria-pressed', 'aria-label', 'aria-disabled', 'disabled', 'hidden']) {
+        assert(observedAttributes.includes(attr), `Observe website changes to ${attr}`);
+    }
+    webChanged();
+    assert.equal(state().shuffle, true);
+    assert.equal(state().repeatoffSelected, true);
+    assert.equal(await bridge.run('shuffle'), true);
+    assert.equal(state().shuffled, true);
+    assert.equal(await bridge.run('shuffle'), true);
+    assert.equal(state().shuffled, false);
+    for (const start of ['NONE', 'ALL', 'ONE']) {
+        for (const [action, wanted] of Object.entries({repeatoff: 'NONE', repeatall: 'ALL', repeatone: 'ONE'})) {
+            queue.repeatMode = start;
+            repeatClicks = 0;
+            assert.equal(await bridge.run(action), true);
+            assert.equal(queue.repeatMode, wanted, `${start} -> ${wanted}`);
+            assert.equal(state()[action + 'Selected'], true);
+            assert.equal(['repeatoff', 'repeatall', 'repeatone'].filter(a => state()[a + 'Selected']).length, 1);
+            assert(start === wanted ? repeatClicks === 0 : repeatClicks <= 2, 'Never toggle an already-selected mode');
+        }
+    }
+    queue.shuffleEnabled = true;
+    queue.repeatMode = 'ALL';
+    webChanged();
+    assert.equal(state().shuffled, true, 'Reflect changes made on the website');
+    assert.equal(state().repeatallSelected, true);
+    const pending = bridge.run('repeatoff');
+    assert.equal(state().repeatone, false, 'Disable queue commands while cycling');
+    assert.equal(await bridge.run('repeatone'), false, 'Do not interleave repeat cycles');
+    assert.equal(await pending, true);
+    assert.equal(state().repeatone, true);
+    for (const property of ['disabled', 'hidden', 'blocked']) {
+        shuffleButton[property] = true;
+        repeatButton[property] = true;
+        webChanged();
+        assert.equal(state().shuffle, false);
+        assert.equal(state().repeatall, false);
+        assert.equal(await bridge.run('shuffle'), false);
+        assert.equal(await bridge.run('repeatone'), false);
+        shuffleButton[property] = false;
+        repeatButton[property] = false;
+    }
+    repeatButton.click = () => { repeatClicks++; };
+    repeatClicks = 0;
+    assert.equal(await bridge.run('repeatone'), false, 'Do not claim success when the website ignores a click');
+    assert.equal(repeatClicks, 1, 'Stop when the website does not advance');
+    shuffleButton.click = () => { throw new Error('Queue failed'); };
+    await assert.rejects(bridge.run('shuffle'), /Queue failed/);
+    assert.equal(state().shuffle, true, 'A failed command must release the busy state');
+    queue.repeatMode = 'DISABLED';
+    webChanged();
+    assert.equal(state().repeatoff, false);
+    assert.equal(state().repeatallSelected, false);
+    assert.equal(await bridge.run('repeatoff'), false);
+    assert.equal(await bridge.run('repeatinvalid'), false);
+    shuffleButton = repeatButton = null;
+    controlsChanged([{target: {}, addedNodes: [], removedNodes: [{matches: () => true}]}]);
+    assert.equal(state().shuffle, false, 'Disable controls removed by navigation');
+    assert.equal(state().repeatall, false);
     player.error = {};
     document.dispatchEvent(new Event('error'));
     await Promise.resolve();
@@ -177,5 +267,5 @@ console.log('PASS: first playback and later tracks keep next/previous controls w
     assert.equal(messages.length, count, 'Do not resend unchanged state');
     bridge.update(true);
     assert.equal(messages.length, count + 1, 'A navigation reset can request a fresh state');
-    console.log('PASS: playback dispatch, state, volume bounds, mute, focus, origin isolation, and failures');
+    console.log('PASS: playback, volume, shuffle, repeat modes, website sync, disabled controls, focus, origin isolation, and failures');
 })().catch(error => { console.error(error); process.exitCode = 1; });
