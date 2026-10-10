@@ -32,7 +32,7 @@ final class MusicUpdates: NSObject, NSMenuItemValidation, NSWindowDelegate, SPUU
         }
     }
 
-    @objc private func showReleaseNotes() {
+    @objc func showReleaseNotes() {
         if let releaseNotesWindow {
             releaseNotesWindow.makeKeyAndOrderFront(nil)
             return

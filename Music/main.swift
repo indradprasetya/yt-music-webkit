@@ -329,7 +329,9 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(webView)
         NSApp.activate(ignoringOtherApps: true)
-        startupMessages = MusicStartupMessages(window: window) { [weak self] in self?.updates.checkForUpdates() }
+        startupMessages = MusicStartupMessages(window: window,
+            onUpdate: { [weak self] in self?.updates.checkForUpdates() },
+            onWhatsNew: { [weak self] in self?.updates.showReleaseNotes() })
         if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
             startupMessages.start(version: version)
         }

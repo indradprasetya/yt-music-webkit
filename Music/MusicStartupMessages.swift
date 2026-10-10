@@ -4,6 +4,7 @@ import WebKit
 final class MusicStartupMessages: NSObject, WKNavigationDelegate {
     private weak var window: NSWindow?
     private let onUpdate: () -> Void
+    private let onWhatsNew: () -> Void
     private var task: Task<Void, Never>?
     private var timeout: Timer?
     private var pageURL: URL?
@@ -12,9 +13,10 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
     private var originalBackground: NSColor?
     private var escapeMonitor: Any?
 
-    init(window: NSWindow, onUpdate: @escaping () -> Void) {
+    init(window: NSWindow, onUpdate: @escaping () -> Void, onWhatsNew: @escaping () -> Void) {
         self.window = window
         self.onUpdate = onUpdate
+        self.onWhatsNew = onWhatsNew
     }
 
     func start(version: String, manifestURL: URL = MusicStartupRules.manifestURL,
@@ -117,6 +119,7 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
             switch url.absoluteString {
             case "music-action://continue": dismiss()
             case "music-action://update": onUpdate()
+            case "music-action://whats-new": onWhatsNew()
             default:
                 if url.scheme == "https" { NSWorkspace.shared.open(url) }
             }

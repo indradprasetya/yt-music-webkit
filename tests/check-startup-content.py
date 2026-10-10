@@ -18,17 +18,20 @@ class Page(HTMLParser):
         super().__init__()
         self.links = []
         self.images = []
+        self.stylesheets = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         assert tag not in {"script", "iframe", "form"}, f"Unsupported element: {tag}"
         if tag == "a":
             href = attrs.get("href", "")
-            assert href in {"music-action://continue", "music-action://update"} or href.startswith("https://"), href
+            assert href in {"music-action://continue", "music-action://update", "music-action://whats-new"} or href.startswith("https://"), href
             self.links.append(href)
         if tag == "img":
             assert attrs.get("alt"), "Images need alternative text"
             self.images.append(attrs["src"])
+        if tag == "link" and attrs.get("rel") == "stylesheet":
+            self.stylesheets.append(attrs["href"])
 
 
 for rule in manifest["rules"]:
@@ -44,9 +47,9 @@ for rule in manifest["rules"]:
     page = Page()
     page.feed(path.read_text())
     assert "music-action://continue" in page.links, f"{path.name}: missing Continue"
-    for src in page.images:
+    for src in page.images + page.stylesheets:
         url = urlsplit(src)
-        assert not url.scheme and not url.netloc, "Host images alongside the page"
+        assert not url.scheme and not url.netloc, "Host assets alongside the page"
         image = (path.parent / src).resolve()
         assert image.is_relative_to(content.resolve()) and image.is_file(), src
 
@@ -54,6 +57,11 @@ welcome = Page()
 welcome.feed((content / "welcome.html").read_text())
 assert "https://ko-fi.com/indradprasetya" in welcome.links
 assert "https://github.com/indradprasetya/yt-music-webkit/blob/main/README.md" in welcome.links
+updated = Page()
+updated.feed((content / "updated.html").read_text())
+assert "music-action://whats-new" in updated.links
+assert "https://ko-fi.com/indradprasetya" in updated.links
+assert "https://github.com/indradprasetya/yt-music-webkit/blob/main/README.md" in updated.links
 assert not list((root / "Music").rglob("*.html")), "Startup HTML must not be bundled"
 assert not list((root / "Music").rglob("channels4_profile.jpg")), "Profile must not be bundled"
 print("PASS: startup manifest, hosted pages, Continue/support/README links, and remote-only assets")

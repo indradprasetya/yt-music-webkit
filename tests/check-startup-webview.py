@@ -24,12 +24,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if name == "manifest.json":
             rule = {"enabled": scenario != "disabled", "page": "welcome.html"}
             body = json.dumps({"schemaVersion": 1, "rules": [rule]}).encode()
+            if scenario == "updated":
+                body = (pages / "manifest.json").read_bytes()
             mime = "application/json"
         elif name == "channels4_profile.jpg":
             body = (pages / name).read_bytes()
             mime = "image/jpeg"
+        elif name == "message.css":
+            body = (pages / name).read_bytes()
+            mime = "text/css"
         else:
-            body = (pages / "welcome.html").read_bytes()
+            body = (pages / ("updated.html" if scenario == "updated" else "welcome.html")).read_bytes()
             if scenario == "missing":
                 status = 404
             elif scenario == "empty":
@@ -70,7 +75,9 @@ window.makeKeyAndOrderFront(nil)
 let domain = "MusicStartupWebViewCheck.\(UUID().uuidString)"
 let defaults = UserDefaults(suiteName: domain)!
 var updateCount = 0
-let messages = MusicStartupMessages(window: window) { updateCount += 1 }
+var whatsNewCount = 0
+let messages = MusicStartupMessages(window: window, onUpdate: { updateCount += 1 },
+                                    onWhatsNew: { whatsNewCount += 1 })
 let base = CommandLine.arguments[1]
 let preview = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : nil
 
@@ -103,6 +110,7 @@ Task { @MainActor in
     await expectJS("document.querySelector('img').naturalWidth > 0")
     await expectJS("document.documentElement.scrollWidth <= innerWidth")
     await expectJS("document.querySelector('h1').innerText === 'Thanks for using'")
+    await expectJS("getComputedStyle(document.documentElement).backgroundColor === 'rgb(3, 3, 3)'")
     if let preview {
         try! await Task.sleep(nanoseconds: 300_000_000)
         await snapshot("\(preview)/desktop.png")
@@ -121,6 +129,29 @@ Task { @MainActor in
     await waitFor { updateCount == 1 }
     assert(window.contentView !== original, "Update must leave Continue available")
     messages.dismiss()
+    defaults.set("1.1.2", forKey: MusicStartupRules.versionKey)
+    start("updated")
+    await waitFor { window.contentView !== original }
+    await expectJS("document.querySelector('h1').innerText === 'Thanks for updating'")
+    await expectJS("getComputedStyle(document.documentElement).backgroundColor === 'rgb(3, 3, 3)'")
+    await expectJS("document.querySelector('.whats-new').getBoundingClientRect().top < document.querySelector('.actions').getBoundingClientRect().top")
+    await expectJS("document.querySelector('.readme').innerText === 'View Music pages'")
+    if let preview {
+        window.setContentSize(NSSize(width: 1200, height: 800))
+        window.contentView!.layoutSubtreeIfNeeded()
+        try! await Task.sleep(nanoseconds: 300_000_000)
+        await snapshot("\(preview)/updated-desktop.png")
+        window.setContentSize(NSSize(width: 640, height: 580))
+        window.contentView!.layoutSubtreeIfNeeded()
+        try! await Task.sleep(nanoseconds: 300_000_000)
+        await expectJS("document.documentElement.scrollWidth <= innerWidth")
+        await snapshot("\(preview)/updated-small-window.png")
+    }
+    _ = await js("document.querySelector('.whats-new').click()")
+    await waitFor { whatsNewCount == 1 }
+    assert(window.contentView !== original, "What's New must leave the startup page available")
+    _ = await js("document.querySelector('a[href=\"music-action://continue\"]').click()")
+    await waitFor { window.contentView === original }
     start("success")
     await waitFor { window.contentView !== original }
     let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -139,7 +170,7 @@ Task { @MainActor in
     try! await Task.sleep(nanoseconds: 500_000_000)
     assert(window.contentView === original)
     defaults.removePersistentDomain(forName: domain)
-    print("PASS: remote WebView, image, layout, Continue, Update, Escape, silent failures, and cancellation")
+    print("PASS: welcome/update routing, hosted CSS, What's New, Continue, Update, Escape, and silent failures")
     exit(0)
 }
 app.run()

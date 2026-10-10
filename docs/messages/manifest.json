@@ -3,8 +3,13 @@
   "rules": [
     {
       "enabled": true,
-      "launches": ["firstLaunch", "versionChanged"],
+      "launches": ["firstLaunch"],
       "page": "welcome.html"
+    },
+    {
+      "enabled": true,
+      "launches": ["versionChanged"],
+      "page": "updated.html"
     }
   ]
 }
