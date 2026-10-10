@@ -9,9 +9,12 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 ## Download
 
-[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Apple-Silicon.dmg) For Macs with Apple Silicon chips: M1, M2, M3, and later.
+[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Apple-Silicon.dmg)<br>
+<span style="font-size: 0.8em;">For Macs with Apple Silicon chips: M1, M2, M3, and later.</span>
 
-[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Intel.dmg) For Macs with an Intel processor.
+
+[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.1/Music-1.1.1-Intel.dmg)<br>
+<span style="font-size: 0.8em;">For Macs with an Intel processor.</span>
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
@@ -19,11 +22,15 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 ### Music window
 
-![YouTube Music playing in the native macOS Music window](docs/screenshots/music-window.png)
+<p align="center">
+  <img src="docs/screenshots/music-window.png" alt="YouTube Music playing in the native macOS Music window" style="display: block; margin: 0 auto;">
+</p>
 
 ### macOS Now Playing
 
-![macOS Now Playing controls with album artwork, playback controls, and track progress](docs/screenshots/now-playing.png)
+<p align="center">
+  <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" style="display: block; margin: 0 auto;">
+</p>
 
 ## Privacy
 
