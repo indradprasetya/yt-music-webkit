@@ -23,6 +23,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         status, mime = 200, "text/html"
         if name == "manifest.json":
             rule = {"enabled": scenario != "disabled", "page": "welcome.html"}
+            if scenario in {"disabled", "missing", "empty", "redirect", "slow", "once"}:
+                rule["id"] = "once-warning"
+            elif scenario == "once-new":
+                rule["id"] = "next-warning"
             body = json.dumps({"schemaVersion": 1, "rules": [rule]}).encode()
             if scenario == "updated":
                 body = (pages / "manifest.json").read_bytes()
@@ -163,14 +167,32 @@ Task { @MainActor in
         start(scenario)
         try! await Task.sleep(nanoseconds: 6_200_000_000)
         assert(window.contentView === original, "\(scenario) must silently keep Music visible")
+        assert(!defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "once-warning"),
+               "\(scenario) must not consume a message that was never shown")
     }
     start("slow")
     messages.cancelPending()
     window.orderOut(nil)
     try! await Task.sleep(nanoseconds: 500_000_000)
     assert(window.contentView === original)
+    assert(!defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "once-warning"))
+    window.makeKeyAndOrderFront(nil)
+    start("once")
+    await waitFor { window.contentView !== original }
+    assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "once-warning"),
+           "Only a presented message is marked shown")
+    messages.dismiss()
+    let reopened = MusicStartupMessages(window: window, onUpdate: {}, onWhatsNew: {})
+    reopened.start(version: "1.1.3", manifestURL: URL(string: "\(base)/once/manifest.json")!,
+                   defaults: UserDefaults(suiteName: domain)!)
+    try! await Task.sleep(nanoseconds: 6_200_000_000)
+    assert(window.contentView === original, "A previously shown ID must stay hidden after reopening")
+    start("once-new")
+    await waitFor { window.contentView !== original }
+    assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "next-warning"))
+    messages.dismiss()
     defaults.removePersistentDomain(forName: domain)
-    print("PASS: welcome/update routing, hosted CSS, What's New, Continue, Update, Escape, and silent failures")
+    print("PASS: welcome/update routing, hosted CSS, actions, once-per-ID display, and retries after silent failures")
     exit(0)
 }
 app.run()

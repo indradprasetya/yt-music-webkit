@@ -34,13 +34,13 @@ let configuration = URLSessionConfiguration.ephemeral
 configuration.protocolClasses = [MessageProtocol.self]
 let session = URLSession(configuration: configuration)
 let endpoint = URL(string: "https://example.invalid/messages/manifest.json")!
-func check(_ version: String) async -> URL? {
+func check(_ version: String) async -> MusicStartupRules.Message? {
     await MusicStartupRules.check(version: version, manifestURL: endpoint, defaults: defaults, session: session)
 }
 func rules(_ body: String) { MessageProtocol.body = "{\"schemaVersion\":1,\"rules\":[\(body)]}" }
 func expect(_ version: String, _ filename: String?) async {
     let result = await check(version)
-    assert(result?.lastPathComponent == filename, "Unexpected page: \(String(describing: result))")
+    assert(result?.url.lastPathComponent == filename, "Unexpected page: \(String(describing: result))")
 }
 Task {
     defer {
@@ -89,12 +89,35 @@ Task {
     }
     MessageProtocol.status = 200
     await expect("9.0.3", "support.html")
+    rules(#"{"enabled":true,"id":"google-layout-120","versions":["1.1.3"],"page":"warning.html"}"#)
+    await expect("1.2.0", nil)
+    let warning = await check("1.1.3")
+    assert(warning?.id == "google-layout-120")
+    assert(warning?.url.lastPathComponent == "warning.html")
+    await expect("1.1.3", "warning.html") // A check alone must not consume the message.
+    warning!.markShown(defaults: defaults)
+    await expect("1.1.3", nil)
+    let reopenedDefaults = UserDefaults(suiteName: domain)!
+    let repeated = await MusicStartupRules.check(version: "1.1.3", manifestURL: endpoint,
+                                                defaults: reopenedDefaults, session: session)
+    assert(repeated == nil, "Shown IDs must persist beyond the defaults instance")
+    rules(#"{"enabled":true,"id":"google-layout-120","page":"renamed.html"},{"enabled":true,"id":"next-warning","page":"warning.html"},{"enabled":true,"page":"regular.html"}"#)
+    let next = await check("1.1.3")
+    assert(next?.id == "next-warning", "Skip a shown ID, even if its page changed")
+    next!.markShown(defaults: defaults)
+    await expect("1.1.3", "regular.html")
+    await expect("1.2.0", "regular.html")
+    for id in ["", " ", "bad/id", #"bad\n"#, "café", String(repeating: "x", count: 129)] {
+        rules("{\"enabled\":true,\"id\":\"\(id)\",\"page\":\"warning.html\"}")
+        await expect("9.0.4", nil)
+        assert(defaults.string(forKey: MusicStartupRules.versionKey) == "1.2.0")
+    }
     for request in MessageProtocol.requests {
         assert(request.url == endpoint, "No version or user identifier is sent")
         assert(request.timeoutInterval == 3)
         assert(request.cachePolicy == .reloadIgnoringLocalAndRemoteCacheData)
     }
-    print("PASS: launch state, targeting, order, every-startup rules, disabled/empty rules, failures, and path validation")
+    print("PASS: launch state, targeting, order, once-per-ID persistence, repeatable rules, failures, and validation")
     CFRunLoopStop(CFRunLoopGetMain())
 }
 CFRunLoopRun()

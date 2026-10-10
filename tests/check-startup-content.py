@@ -36,6 +36,8 @@ class Page(HTMLParser):
 
 for rule in manifest["rules"]:
     assert type(rule["enabled"]) is bool
+    if "id" in rule:
+        assert isinstance(rule["id"], str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", rule["id"])
     if "launches" in rule:
         assert isinstance(rule["launches"], list)
         assert all(value in {"firstLaunch", "versionChanged", "regular"} for value in rule["launches"])

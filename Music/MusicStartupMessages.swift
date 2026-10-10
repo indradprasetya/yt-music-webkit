@@ -8,6 +8,7 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
     private var task: Task<Void, Never>?
     private var timeout: Timer?
     private var pageURL: URL?
+    private var markShown: (() -> Void)?
     private var messageView: WKWebView?
     private var originalContent: NSView?
     private var originalBackground: NSColor?
@@ -22,10 +23,11 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
     func start(version: String, manifestURL: URL = MusicStartupRules.manifestURL,
                defaults: UserDefaults = .standard) {
         task = Task { @MainActor [weak self] in
-            let url = await MusicStartupRules.check(version: version, manifestURL: manifestURL, defaults: defaults)
-            guard !Task.isCancelled, let self, let url,
+            let message = await MusicStartupRules.check(version: version, manifestURL: manifestURL, defaults: defaults)
+            guard !Task.isCancelled, let self, let message,
                   let window = self.window, window.isVisible, !window.isMiniaturized else { return }
-            self.load(url)
+            self.markShown = { message.markShown(defaults: defaults) }
+            self.load(message.url)
         }
     }
 
@@ -52,6 +54,7 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
         messageView?.stopLoading()
         messageView = nil
         pageURL = nil
+        markShown = nil
     }
 
     func dismiss() {
@@ -104,6 +107,8 @@ final class MusicStartupMessages: NSObject, WKNavigationDelegate {
             self.dismiss()
             return nil
         }
+        markShown?()
+        markShown = nil
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
