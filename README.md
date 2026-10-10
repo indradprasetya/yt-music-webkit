@@ -5,8 +5,6 @@
 
 Music is a lightweight YouTube Music app for macOS, built with Swift and WebKit. Available for Apple Silicon and Intel Macs, with native playback controls and automatic update checks.
 
-It opens the YouTube Music website in its own window, where you can sign in and access your library and playlists.
-
 Music is designed with privacy and security in mind. It has no developer-operated backend and sends no personal data, analytics, or listening history to the developer. Official installers are signed and notarized, and update signatures are verified before installation. See [Privacy](#privacy) for details.
 
 <p align="center">
@@ -26,14 +24,11 @@ Music is designed with privacy and security in mind. It has no developer-operate
 
 ## Features
 
-- **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 - **Native Controls menu:** Control playback, volume, and mute, or choose Shuffle and Repeat Off, All, or One. Shuffle and Repeat stay in sync with YouTube Music.
 - **Background playback:** Music keeps playing when you close the window. Click the Dock icon to reopen it, or press Command-Q to quit.
-
-## macOS Now Playing
-
-<p align="center">
-  <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="75%" style="display: block; margin: 0 auto;">
+- **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
+<p>
+  <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="50%">
 </p>
 
 ## Privacy
