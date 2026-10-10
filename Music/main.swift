@@ -1,24 +1,102 @@
 import AppKit
 import WebKit
 
-final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSMenuItemValidation {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var updates: MusicUpdates!
     private var backgroundObservation: NSKeyValueObservation?
+    private var playbackState: [String: Bool] = [:]
+    private let playbackMenu = NSMenu(title: "Controls")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.add(self, name: "playbackState")
         // Never advertise interval skipping: Now Playing can cache those initial controls.
         configuration.userContentController.addUserScript(WKUserScript(source: """
-        if (location.hostname === 'music.youtube.com' && navigator.mediaSession) {
+        if (location.protocol === 'https:' && location.hostname === 'music.youtube.com' && navigator.mediaSession) {
+            const handlers = new Map();
+            let lastState = '';
+            const media = () => {
+                const elements = [...document.querySelectorAll('video, audio')];
+                return elements.find(element => !element.paused && !element.ended) || elements[0];
+            };
+            function volumeControls() {
+                // shortcut: YouTube owns this player element; revisit if its exposed API changes.
+                const player = document.querySelector('#movie_player');
+                return player && ['getVolume', 'setVolume', 'isMuted', 'mute', 'unMute'].every(method =>
+                    typeof player[method] === 'function') && Number.isFinite(player.getVolume()) ? player : null;
+            }
+            function update(force = false) {
+                const player = media();
+                const ready = !!player && player.readyState > 0 && !player.error;
+                const audio = volumeControls();
+                const muted = audio ? audio.isMuted() : !!player?.muted;
+                let focused = document.activeElement;
+                while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+                const state = {
+                    paused: !player || player.paused || player.ended,
+                    muted,
+                    playpause: ready && handlers.has(player.paused || player.ended ? 'play' : 'pause'),
+                    nexttrack: ready && handlers.has('nexttrack'),
+                    previoustrack: ready && handlers.has('previoustrack'),
+                    volumeup: ready && !!audio && (audio.getVolume() < 100 || muted),
+                    volumedown: ready && !!audio && audio.getVolume() > 0,
+                    mute: ready && !!audio,
+                    editing: !!focused && (focused.isContentEditable || focused.matches('input, textarea, select, iframe, [role="textbox"]'))
+                };
+                const serialized = JSON.stringify(state);
+                if (!force && serialized === lastState) return;
+                lastState = serialized;
+                window.webkit.messageHandlers.playbackState.postMessage(state);
+            }
+            window.musicPlayback = {
+                update,
+                async run(action) {
+                    const player = media();
+                    if (!player || player.readyState === 0 || player.error) return false;
+                    try {
+                        if (['volumeup', 'volumedown', 'mute'].includes(action)) {
+                            const audio = volumeControls();
+                            if (!audio) return false;
+                            // Keep the website's slider, saved volume, and loudness normalization in sync.
+                            if (action === 'mute') {
+                                if (audio.isMuted()) audio.unMute();
+                                else audio.mute();
+                            } else {
+                                audio.setVolume(Math.max(0, Math.min(100, audio.getVolume() + (action === 'volumeup' ? 5 : -5))));
+                                if (action === 'volumeup' && audio.isMuted()) audio.unMute();
+                            }
+                        } else {
+                            if (action === 'playpause') action = player.paused || player.ended ? 'play' : 'pause';
+                            if (!['play', 'pause', 'nexttrack', 'previoustrack'].includes(action) || !handlers.has(action)) return false;
+                            await handlers.get(action)({action});
+                        }
+                        return true;
+                    } finally {
+                        update();
+                    }
+                }
+            };
             // Keep the hook on the prototype, even if WebKit recreates the session wrapper.
             const setActionHandler = MediaSession.prototype.setActionHandler;
             MediaSession.prototype.setActionHandler = function(action, handler) {
                 setActionHandler.call(this, action, action === 'seekbackward' || action === 'seekforward' ? null : handler);
+                if (handler) handlers.set(action, handler);
+                else handlers.delete(action);
+                update();
             };
+            for (const event of ['DOMContentLoaded', 'loadedmetadata', 'loadstart', 'emptied', 'play', 'pause', 'ended', 'volumechange', 'error', 'focusin', 'focusout']) {
+                document.addEventListener(event, () => queueMicrotask(update), true);
+            }
+            // Refresh availability when YouTube mounts or replaces its player.
+            new MutationObserver(records => {
+                if (records.some(({target, addedNodes}) => target.closest?.('#movie_player')
+                    || [...addedNodes].some(node => node.matches?.('#movie_player') || node.querySelector?.('#movie_player')))) update();
+            }).observe(document, {subtree: true, childList: true});
+            update();
         }
         """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(self, contentWorld: .defaultClient, name: "titlebarContentWidth")
@@ -190,6 +268,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
+        webView.navigationDelegate = self
         let safariVersion = Bundle(url: URL(fileURLWithPath: "/Applications/Safari.app"))?
             .infoDictionary?["CFBundleShortVersionString"] as? String ?? "18.0"
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(safariVersion) Safari/605.1.15"
@@ -211,13 +290,23 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.contentView = TitlebarBackgroundView(webView: webView)
         window.delegate = self
         updates = MusicUpdates()
-        updates.attach(to: window)
+        makeMenu()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(webView)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "playbackState" {
+            guard message.frameInfo.isMainFrame,
+                  message.frameInfo.securityOrigin.protocol == "https",
+                  message.frameInfo.securityOrigin.host == "music.youtube.com",
+                  musicURL != nil, let state = message.body as? [String: Bool] else { return }
+            playbackState = state
+            (NSApp.mainMenu as? MusicMenu)?.editing = state["editing"] ?? true
+            playbackMenu.update()
+            return
+        }
         guard message.name == "titlebarContentWidth", message.frameInfo.isMainFrame,
               message.frameInfo.securityOrigin.host == "music.youtube.com",
               let widths = message.body as? [String: Double],
@@ -237,8 +326,136 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         webView.reload()
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    private var musicURL: URL? {
+        guard let url = webView.url, url.scheme == "https", url.host == "music.youtube.com" else { return nil }
+        return url
+    }
+
+    @objc private func openInBrowser() {
+        guard let url = musicURL else { return }
+        if !NSWorkspace.shared.open(url) { NSSound.beep() }
+    }
+
+    @objc private func reportIssue() {
+        if !NSWorkspace.shared.open(URL(string: "https://github.com/indradprasetya/yt-music-webkit/issues")!) {
+            NSSound.beep()
+        }
+    }
+
+    @objc private func showMusic() {
+        window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func controlPlayback(_ sender: NSMenuItem) {
+        guard musicURL != nil, let action = sender.representedObject as? String,
+              playbackState[action] == true else { return }
+        webView.callAsyncJavaScript("return await window.musicPlayback?.run(action) ?? false;",
+                                   arguments: ["action": action], in: nil, in: .page) { [weak self] result in
+            switch result {
+            case .success(let value) where value as? Bool == true: break
+            default:
+                self?.resetPlayback()
+                NSSound.beep()
+            }
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(openInBrowser): return musicURL != nil && !webView.isLoading
+        case #selector(refresh): return true
+        case #selector(controlPlayback(_:)):
+            guard let action = menuItem.representedObject as? String else { return false }
+            if action == "playpause" { menuItem.title = playbackState["paused"] == false ? "Pause" : "Play" }
+            if action == "mute" { menuItem.title = playbackState["muted"] == true ? "Unmute" : "Mute" }
+            return musicURL != nil && playbackState[action] == true
+        default: return true
+        }
+    }
+
+    private func resetPlayback() {
+        playbackState = [:]
+        (NSApp.mainMenu as? MusicMenu)?.editing = true
+        playbackMenu.update()
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { resetPlayback() }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { resetPlayback() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { resetPlayback() }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
+    }
+
+    private func makeMenu() {
+        let menu = MusicMenu()
+        menu.webView = webView
+        let appMenu = NSMenu(title: "Music")
+        appMenu.addItem(withTitle: "About Music", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let services = NSMenu(title: "Services")
+        appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = services
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Music", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h").keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Music", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        let file = NSMenu(title: "File")
+        file.addItem(withTitle: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "").target = self
+        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z").keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        let view = NSMenu(title: "View")
+        view.addItem(withTitle: "Reload", action: #selector(refresh), keyEquivalent: "r").target = self
+        view.addItem(.separator())
+        view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").keyEquivalentModifierMask = [.command, .control]
+
+        for (title, action, key) in [("Play", "playpause", " "), ("Next Track", "nexttrack", "\u{F703}"),
+                                     ("Previous Track", "previoustrack", "\u{F702}"), ("Volume Up", "volumeup", "\u{F700}"),
+                                     ("Volume Down", "volumedown", "\u{F701}"), ("Mute", "mute", "")] {
+            if action == "nexttrack" || action == "volumeup" { playbackMenu.addItem(.separator()) }
+            let item = playbackMenu.addItem(withTitle: title, action: #selector(controlPlayback(_:)), keyEquivalent: key)
+            item.target = self
+            item.representedObject = action
+            if action == "playpause" { item.keyEquivalentModifierMask = [] }
+        }
+
+        let windows = NSMenu(title: "Window")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windows.addItem(.separator())
+        windows.addItem(withTitle: "Show Music", action: #selector(showMusic), keyEquivalent: "").target = self
+        let help = NSMenu(title: "Help")
+        help.addItem(withTitle: "Report an Issue…", action: #selector(reportIssue), keyEquivalent: "").target = self
+        help.addItem(.separator())
+        for submenu in [appMenu, file, edit, view, playbackMenu, windows, help] {
+            menu.addItem(withTitle: submenu.title, action: nil, keyEquivalent: "").submenu = submenu
+        }
+        NSApp.mainMenu = menu
+        NSApp.servicesMenu = services
+        NSApp.windowsMenu = windows
+        NSApp.helpMenu = help
+        updates.attach(to: appMenu, helpMenu: help)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        showMusic()
         return true
     }
 
@@ -248,6 +465,20 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             webView.load(URLRequest(url: url))
         }
         return nil
+    }
+}
+
+final class MusicMenu: NSMenu {
+    weak var webView: WKWebView?
+    var editing = true
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let key = event.charactersIgnoringModifiers ?? ""
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let playbackKey = (key == " " && modifiers.isEmpty)
+            || (["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"].contains(key) && modifiers == .command)
+        if playbackKey && (editing || NSApp.keyWindow !== webView?.window) { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }
 
@@ -313,17 +544,4 @@ let delegate = MusicApp()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
 
-let menu = NSMenu()
-let appMenu = NSMenu()
-appMenu.addItem(withTitle: "About Music", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-appMenu.addItem(.separator())
-let refreshItem = appMenu.addItem(withTitle: "Refresh", action: #selector(MusicApp.refresh), keyEquivalent: "r")
-refreshItem.target = delegate
-appMenu.addItem(.separator())
-appMenu.addItem(withTitle: "Quit Music", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-let appItem = NSMenuItem()
-appItem.submenu = appMenu
-menu.addItem(appItem)
-
-app.mainMenu = menu
 app.run()

@@ -2,8 +2,7 @@ import AppKit
 import Sparkle
 import WebKit
 
-final class MusicUpdates: NSObject, NSMenuDelegate, NSWindowDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate, SUVersionDisplay, WKNavigationDelegate {
-    let menu = NSMenu(title: "Updates")
+final class MusicUpdates: NSObject, NSMenuItemValidation, NSWindowDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate, SUVersionDisplay, WKNavigationDelegate {
     private let checkItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
     private var releaseNotesWindow: NSPanel?
     private var controller: SPUStandardUpdaterController!
@@ -15,23 +14,17 @@ final class MusicUpdates: NSObject, NSMenuDelegate, NSWindowDelegate, SPUUpdater
     override init() {
         super.init()
         controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
-        menu.autoenablesItems = false
-        menu.delegate = self
         checkItem.toolTip = "Not checked yet"
-        let notesItem = NSMenuItem(title: "What’s New…", action: #selector(showReleaseNotes), keyEquivalent: "")
-        for item in [checkItem, notesItem] {
-            item.target = self
-            menu.addItem(item)
-        }
+        checkItem.target = self
         availabilityObservation = updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, _ in
             self?.refreshMenu()
         }
     }
 
-    func attach(to _: NSWindow) {
-        let updatesItem = NSMenuItem(title: "Updates", action: nil, keyEquivalent: "")
-        updatesItem.submenu = menu
-        NSApp.mainMenu?.addItem(updatesItem)
+    func attach(to appMenu: NSMenu, helpMenu: NSMenu) {
+        appMenu.insertItem(checkItem, at: 2)
+        appMenu.insertItem(.separator(), at: 3)
+        helpMenu.addItem(withTitle: "What’s New…", action: #selector(showReleaseNotes), keyEquivalent: "").target = self
         do {
             try updater.start()
         } catch {
@@ -93,7 +86,9 @@ final class MusicUpdates: NSObject, NSMenuDelegate, NSWindowDelegate, SPUUpdater
         controller.checkForUpdates(nil)
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) { refreshMenu() }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem !== checkItem || updater.canCheckForUpdates
+    }
 
     private func refreshMenu() {
         checkItem.isEnabled = updater.canCheckForUpdates

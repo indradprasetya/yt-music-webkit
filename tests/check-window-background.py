@@ -212,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix="music-window-check-") as directory:
     source = source.replace('webView.load(URLRequest(url: URL(string: "https://music.youtube.com/")!))', '')
     script = work / "main.swift"
     script.write_text(source.replace("NSApp.activate(ignoringOtherApps: true)",
-                                     "NSApp.activate(ignoringOtherApps: true)\n" + checks))
+                                     "NSApp.activate(ignoringOtherApps: true)\n" + checks, 1))
     binary = app / "MacOS/WindowCheck"
     subprocess.run(["xcrun", "swiftc", "-F", str(frameworks), "-framework", "Sparkle",
                     "-Xlinker", "-rpath", "-Xlinker", str(frameworks), str(script),

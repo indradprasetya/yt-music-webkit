@@ -44,13 +44,16 @@ app.mainMenu = NSMenu()
 let appItem = NSMenuItem()
 appItem.submenu = NSMenu(title: "Music")
 app.mainMenu!.addItem(appItem)
+let appMenu = appItem.submenu!
+appMenu.addItem(withTitle: "About Music", action: nil, keyEquivalent: "")
+appMenu.addItem(.separator())
+let helpMenu = NSMenu(title: "Help")
+app.mainMenu!.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = helpMenu
 let domain = Bundle.main.bundleIdentifier!
 UserDefaults.standard.removePersistentDomain(forName: domain)
 let expected = CommandLine.arguments[1]
 let scenario = CommandLine.arguments[2]
 let updates = MusicUpdates()
-assert(updates.menu.items.map(\.title) == ["Check for Updates…", "What’s New…"])
-assert(updates.menu.items[1].isEnabled && updates.menu.items[1].action != nil, "What's New must open release notes")
 assert(updates.updater.automaticallyChecksForUpdates)
 assert(!updates.updater.automaticallyDownloadsUpdates)
 updates.updater.automaticallyChecksForUpdates = false
@@ -60,13 +63,17 @@ if scenario == "recent" || scenario == "manual" {
     UserDefaults.standard.set(Date(), forKey: "SULastCheckTime")
 }
 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
-updates.attach(to: window)
+updates.attach(to: appMenu, helpMenu: helpMenu)
+let checkItem = appMenu.items[2]
+let notesItem = helpMenu.items[0]
 assert(window.titlebarAccessoryViewControllers.isEmpty, "No info button in the title bar")
-assert(app.mainMenu!.items.count == 2 && app.mainMenu!.items[1].title == "Updates")
-assert(app.mainMenu!.items[1].submenu === updates.menu)
-assert(appItem.submenu!.items.isEmpty, "Update actions must live only in Updates")
+assert(app.mainMenu!.items.count == 2 && app.mainMenu!.items[1].title == "Help", "No separate Updates menu")
+assert(checkItem.title == "Check for Updates…" && checkItem.target === updates)
+assert(notesItem.title == "What’s New…" && notesItem.target === updates)
+assert(updates.validateMenuItem(checkItem) == updates.updater.canCheckForUpdates)
+assert(updates.validateMenuItem(notesItem))
 if scenario == "disabled" {
-    let action = updates.menu.items[1].action!
+    let action = notesItem.action!
     app.sendAction(action, to: updates, from: nil)
     let panel = app.windows.first { $0 is NSPanel && $0.isVisible }!
     assert(window.attachedSheet == nil && panel.sheetParent == nil, "Release notes must be an independent panel")
@@ -88,13 +95,13 @@ if scenario == "manual" {
 let deadline = Date().addingTimeInterval(10)
 let earliest = Date().addingTimeInterval(2)
 let timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-    let status = updates.menu.items[0].toolTip ?? ""
+    let status = checkItem.toolTip ?? ""
     if Date() > earliest && status.hasPrefix(expected) {
         if expected == "Update available" {
-            assert(updates.menu.items[0].title == "Update to 1.1.0…", "Show the marketing version even for a newer internal build")
+            assert(checkItem.title == "Update to 1.1.0…", "Show the marketing version even for a newer internal build")
             assert(updates.updater.canCheckForUpdates, "User must be able to open the pending update")
         } else {
-            assert(updates.menu.items[0].title == "Check for Updates…")
+            assert(checkItem.title == "Check for Updates…")
         }
         UserDefaults.standard.removePersistentDomain(forName: domain)
         print("PASS: \(scenario): \(expected)")
