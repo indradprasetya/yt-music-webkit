@@ -20,40 +20,51 @@ DispatchQueue.main.async {
     for size in [NSSize(width: 1200, height: 800), NSSize(width: 1000, height: 700)] {
         window.setContentSize(size)
         background.layoutSubtreeIfNeeded()
-        let frame = background.convert(web.bounds, from: web)
-        assert(frame == background.convert(window.contentLayoutRect, from: nil),
-               "Keep the page inside the native content area when resizing")
-        let hit = background.hitTest(NSPoint(x: frame.midX, y: frame.midY))!
-        assert(hit === web || hit.isDescendant(of: web), "The live copy must not intercept page input")
-        let titlebarHit = background.hitTest(NSPoint(x: frame.midX, y: frame.maxY + 2))
-        assert(titlebarHit !== web && titlebarHit?.isDescendant(of: web) != true,
-               "The title bar must not contain duplicate interactive controls")
+        assert(web.frame == background.bounds, "One web view fills the page and title bar")
+        let hit = background.hitTest(NSPoint(x: background.bounds.midX, y: background.bounds.midY))!
+        assert(hit === web || hit.isDescendant(of: web), "Page controls remain interactive")
+        let titlebarHit = background.hitTest(NSPoint(x: background.bounds.midX, y: background.bounds.maxY - 2))
+        assert(titlebarHit === background, "Reserve the title bar for native window dragging")
     }
+    background.extendsUnderTitlebar = false
+    background.layoutSubtreeIfNeeded()
+    assert(web.frame == background.convert(window.contentLayoutRect, from: nil), "Keep external sign-in pages below the title bar")
+    background.extendsUnderTitlebar = true
+    background.layoutSubtreeIfNeeded()
     if CommandLine.arguments.contains("--layout-only") {
-        print("PASS: native title-bar/content separation, resizing, and hit testing")
+        print("PASS: full-window background, native dragging, resizing, and external-page insets")
         exit(0)
     }
-    let html = """
-        <!doctype html><html style="background:black;overflow-y:scroll">
-        <style>
-        * { box-sizing:border-box }
-        ::-webkit-scrollbar { width:18px; background:black }
-        body { margin:0 }
-        header { height:80px;border-top:1px solid black;background:linear-gradient(to right,red,blue) }
-        </style>
-        <body><main><div style="min-height:200vh"><header>Visible controls</header></div></main></body></html>
-        """
-    web.loadHTMLString(html, baseURL: URL(string: "https://music.youtube.com/"))
+    web.loadHTMLString("""
+        <!doctype html><html><style>
+        :root { --ytmusic-nav-bar-height:64px }
+        html, body { margin:0; background:black }
+        ytmusic-app-layout { display:block }
+        #content { height:100vh; overflow-y:scroll; position:relative }
+        #photo { position:absolute; top:0; width:100%; height:360px; object-fit:cover }
+        #nav-bar-background, #mini-guide-background {
+            position:fixed; top:0; left:0; height:var(--ytmusic-nav-bar-height); width:100%;
+            background:black; opacity:1; transition:opacity 0.2s; z-index:5;
+        }
+        #mini-guide-background { width:72px; height:100vh }
+        #nav-bar-divider { position:fixed; top:var(--ytmusic-nav-bar-height); width:100%; height:1px }
+        ytmusic-nav-bar { display:block; position:fixed; top:0; left:0; width:100%; height:var(--ytmusic-nav-bar-height); z-index:5 }
+        </style><body><ytmusic-app-layout is-contained-content-layout-enabled>
+        <div id="nav-bar-background"></div><div id="nav-bar-divider"></div>
+        <ytmusic-nav-bar>Search</ytmusic-nav-bar><div id="mini-guide-background"></div>
+        <main id="content"><div style="height:300vh;background:linear-gradient(red,blue)">
+        <img id="photo" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 360'%3E%3Cpath fill='red' d='M0 0h600v120H0z'/%3E%3Cpath fill='blue' d='M0 120h600v240H0z'/%3E%3C/svg%3E">
+        </div></main></ytmusic-app-layout></body></html>
+        """, baseURL: URL(string: "https://music.youtube.com/"))
     let deadline = Date().addingTimeInterval(15)
-    var stage = 0
     var checking = false
     _ = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-        if Date() > deadline { fatalError("Window layout did not settle at stage \(stage)") }
+        if Date() > deadline { fatalError("Window layout did not settle") }
         guard !web.isLoading, !checking else { return }
-        if stage == 3 {
-            checking = true
-            web.callAsyncJavaScript("""
+        checking = true
+        web.callAsyncJavaScript("""
                 const content = document.querySelector('ytmusic-app-layout > #content');
+                const inset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--music-titlebar-height'));
                 const header = document.querySelector('#nav-bar-background');
                 const guide = document.querySelector('#mini-guide-background');
                 const bar = document.querySelector('#music-scrollbar');
@@ -61,6 +72,11 @@ DispatchQueue.main.async {
                 const check = (condition, message) => { if (!condition) throw new Error(message); };
                 check(!!bar, 'Create the overlay scrollbar');
                 if (!CSS.supports('animation-timeline: --music-titlebar-scroll')) return {supported: false};
+                const nav = document.querySelector('ytmusic-nav-bar').getBoundingClientRect();
+                check(nav.top === inset && nav.height === 64, 'Keep the search/header below the window buttons at its original height');
+                const photo = document.querySelector('#photo').getBoundingClientRect();
+                check(photo.top === 0 && photo.height === 360, 'Render the original picture from the top, without stretching a row');
+                check(header.getBoundingClientRect().height === inset + 64, 'The scrolled header also covers the title bar');
                 const samples = [];
                 for (const top of [192, 96, 72, 48, 24, 0, 24, 48, 96, 0]) {
                     content.scrollTop = top;
@@ -71,7 +87,7 @@ DispatchQueue.main.async {
                 }
                 const bounds = bar.getBoundingClientRect();
                 check(content.clientWidth === innerWidth, 'The gradient reaches the right edge without a gutter');
-                check(bounds.top === 8 && bounds.right === innerWidth - 4,
+                check(bounds.top === inset + 8 && bounds.right === innerWidth - 4,
                       'Inset the scrollbar below the title bar and away from the window edge');
                 check(document.elementFromPoint(bounds.right - 7, bounds.top + 10) === bar,
                       'The header must not cover the scrollbar hit area');
@@ -111,94 +127,40 @@ DispatchQueue.main.async {
                 check(content.scrollTop === detachedTop, 'Do not scroll the detached page');
                 replacement.replaceWith(content);
                 await settle();
+                document.querySelector('ytmusic-app-layout').removeAttribute('is-contained-content-layout-enabled');
+                content.style.height = 'auto';
+                content.style.overflow = 'visible';
+                await settle();
+                document.scrollingElement.scrollTop = 160;
+                await settle();
+                check(bar.scrollTop === 160, 'Follow document scrolling in the other YouTube layout');
+                bar.scrollTop = 240;
+                await settle();
+                check(document.scrollingElement.scrollTop === 240, 'The thumb controls document scrolling too');
+                check(bar.getBoundingClientRect().top === inset + 8, 'Root scrolling keeps the thumb out of the title bar');
                 return {supported: true, samples,
-                        contentRight: content.getBoundingClientRect().left + content.clientWidth,
-                        overlayEdges: ['#nav-bar-background', '#nav-bar-divider', 'ytmusic-nav-bar'].map(selector =>
-                            document.querySelector(selector).getBoundingClientRect().right),
                         rootOverscroll: getComputedStyle(document.documentElement).overscrollBehaviorY,
                         contentOverscroll: getComputedStyle(content).overscrollBehaviorY};
-                """, arguments: [:], in: nil, in: .defaultClient) { result in
-                guard case .success(let value) = result, let report = value as? [String: Any] else {
-                    fatalError("Scroll appearance check failed: \(result)")
-                }
-                assert(report["supported"] as? Bool == true, "Run the scroll-driven appearance check on current WebKit")
-                assert(report["rootOverscroll"] as? String == "none")
-                assert(report["contentOverscroll"] as? String == "none", "Do not expose a black gap when reaching the edge")
-                for edge in report["overlayEdges"] as! [Double] {
-                    assert(abs(edge - (report["contentRight"] as! Double)) < 0.5,
-                           "Header layers must leave the scrollbar visible and clickable")
-                }
-                for sample in report["samples"] as! [[String: Double]] {
-                    let expected = min(1, sample["top"]! / 96)
-                    assert(abs(sample["header"]! - expected) < 0.02,
-                           "Reveal the gradient before reaching the top, in both scroll directions: \(sample)")
-                    assert(abs(sample["guide"]! - expected) < 0.02, "Keep the compact sidebar in sync with the header")
-                }
-                timer.invalidate()
-                print("PASS: layout, hit testing, gutter-free overlay, two-way scrolling, resize/replacement, gradient reveal, and overscroll containment")
-                exit(0)
+            """, arguments: [:], in: nil, in: .defaultClient) { result in
+            guard case .success(let value) = result, let report = value as? [String: Any] else {
+                fatalError("Scroll appearance check failed: \(result)")
             }
-            return
-        }
-        let expectedGutter: CGFloat = stage == 2 ? 0 : 18
-        let gutter = web.bounds.width * (1 - background.contentWidthFraction)
-        guard abs(gutter - expectedGutter) < 0.5 else { return }
-        checking = true
-        web.evaluateJavaScript("""
-            ({width:innerWidth, height:innerHeight, top:document.querySelector('header').getBoundingClientRect().top})
-            """) { value, error in
-            assert(error == nil)
-            let viewport = value as! [String: Double]
-            assert(abs(viewport["width"]! - web.bounds.width) < 1)
-            assert(abs(viewport["height"]! - web.bounds.height) < 1)
-            assert(viewport["top"]! == 0, "Page controls must not be shifted or cropped")
-            let frame = background.convert(web.bounds, from: web)
-            assert(frame == background.convert(window.contentLayoutRect, from: nil),
-                   "Keep the whole page and its scrollbar inside the native content area")
-            let hit = background.hitTest(NSPoint(x: frame.midX, y: frame.midY))!
-            assert(hit === web || hit.isDescendant(of: web), "The live copy must not intercept page input")
-            let titlebarHit = background.hitTest(NSPoint(x: frame.midX, y: frame.maxY + 2))
-            assert(titlebarHit !== web && titlebarHit?.isDescendant(of: web) != true,
-                   "The title bar must not contain duplicate interactive controls")
-            if stage == 0 {
-                stage = 1
-                web.evaluateJavaScript("""
-                    document.documentElement.style.overflow = 'hidden';
-                    document.querySelector('main').style.cssText = 'height:100vh;overflow-y:scroll';
-                    document.querySelector('header').style.background = 'linear-gradient(to right,lime,blue)';
-                    """) { _, error in assert(error == nil); checking = false }
-                window.setContentSize(NSSize(width: 1000, height: 700))
-            } else if stage == 1 {
-                stage = 2
-                web.evaluateJavaScript("document.querySelector('main').style.overflow = 'hidden'") {
-                    _, error in assert(error == nil); checking = false
-                }
-            } else {
-                stage = 3
-                checking = false
-                web.loadHTMLString("""
-                    <!doctype html><html><style>
-                    html, body { margin:0; background:black; overflow:hidden }
-                    ytmusic-app-layout { display:block }
-                    #content { height:100vh; overflow-y:scroll }
-                    #nav-bar-background, #mini-guide-background {
-                        position:fixed; top:0; left:0; height:64px; width:100%;
-                        background:black; opacity:1; transition:opacity 0.2s;
-                    }
-                    #mini-guide-background { width:72px; height:100vh }
-                    #nav-bar-divider { position:fixed; top:64px; left:0; width:100%; height:1px }
-                    ytmusic-nav-bar { display:block; position:fixed; top:0; left:0; width:100%; height:64px }
-                    </style><body><ytmusic-app-layout>
-                    <div id="nav-bar-background"></div><div id="nav-bar-divider"></div>
-                    <ytmusic-nav-bar></ytmusic-nav-bar><div id="mini-guide-background"></div>
-                    <main id="content"><div style="height:300vh;background:linear-gradient(red,blue)">Scroll check</div></main>
-                    </ytmusic-app-layout></body></html>
-                    """, baseURL: URL(string: "https://music.youtube.com/"))
+            assert(report["supported"] as? Bool == true, "Run the scroll-driven appearance check on current WebKit")
+            assert(report["rootOverscroll"] as? String == "none")
+            assert(report["contentOverscroll"] as? String == "none")
+            for sample in report["samples"] as! [[String: Double]] {
+                let expected = min(1, sample["top"]! / 96)
+                assert(abs(sample["header"]! - expected) < 0.02, "Fade follows scrolling in both directions: \(sample)")
+                assert(abs(sample["guide"]! - expected) < 0.02, "Keep the compact sidebar in sync")
             }
+            timer.invalidate()
+            print("PASS: full-window photo, header insets, native dragging, nested/root scrolling, resize/replacement, and gradient reveal")
+            exit(0)
         }
     }
 }
 '''
+
 with tempfile.TemporaryDirectory(prefix="music-window-check-") as directory:
     work = Path(directory)
     app = work / "WindowCheck.app/Contents"
