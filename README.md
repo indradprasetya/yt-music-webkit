@@ -1,7 +1,7 @@
 # Music — YouTube Music for macOS
 
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Findradprasetya%2Fyt-music-webkit%2Freleases%2Flatest&query=%24.tag_name&label=version&color=0088cc&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
-[![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](https://github.com/indradprasetya/yt-music-webkit/releases)
+[![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](#download)
 [![Support my app on Ko-fi](https://img.shields.io/badge/Support_my_app-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/indradprasetya)
 
 Music brings YouTube Music to macOS in a lightweight app built with Swift and WebKit for Apple Silicon and Intel Macs. Enjoy your favorite tracks while you work or browse, without worrying about accidentally closing a browser tab. Your music keeps playing in the background, even when you close the app window.
