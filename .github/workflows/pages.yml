@@ -1,4 +1,4 @@
-name: Publish download page
+name: Publish Pages
 
 # One-time setup: Settings > Pages > Build and deployment > Source: GitHub Actions.
 on:
@@ -6,7 +6,9 @@ on:
     branches: [main]
     paths:
       - docs/download.html
+      - docs/messages/**
       - tests/check-download.js
+      - tests/check-startup-content.py
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -29,6 +31,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Check download redirects
         run: node tests/check-download.js
+      - name: Check startup messages
+        run: python3 tests/check-startup-content.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

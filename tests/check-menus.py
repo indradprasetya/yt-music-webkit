@@ -196,6 +196,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
     (app / 'Info.plist').write_bytes(plistlib.dumps(info))
     source = (root / 'Music/main.swift').read_text()
     source = source.replace('webView.load(URLRequest(url: URL(string: "https://music.youtube.com/")!))', '')
+    source = source.replace('startupMessages.start(version: version)', '')
     script = work / 'main.swift'
     script.write_text(source.replace('NSApp.activate(ignoringOtherApps: true)',
                                     'NSApp.activate(ignoringOtherApps: true)\n' + checks, 1))
@@ -203,6 +204,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
     subprocess.run(['xcrun', 'swiftc', '-F', str(frameworks), '-framework', 'Sparkle',
                     '-Xlinker', '-rpath', '-Xlinker', str(frameworks), str(script),
                     str(root / 'Music/MusicUpdates.swift'), str(root / 'Music/MusicReleaseNotes.swift'),
+                    str(root / 'Music/MusicStartupRules.swift'), str(root / 'Music/MusicStartupMessages.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))
     subprocess.run([str(binary)], check=True, timeout=30)

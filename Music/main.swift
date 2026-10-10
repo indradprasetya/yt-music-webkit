@@ -5,6 +5,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var window: NSWindow!
     private var webView: WKWebView!
     private var updates: MusicUpdates!
+    private var startupMessages: MusicStartupMessages!
     private var backgroundObservation: NSKeyValueObservation?
     private var playbackState: [String: Bool] = [:]
     private let playbackMenu = NSMenu(title: "Controls")
@@ -317,6 +318,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         webView.load(URLRequest(url: URL(string: "https://music.youtube.com/")!))
 
         backgroundObservation = webView.observe(\.underPageBackgroundColor, options: [.initial, .new]) { [weak window] view, _ in
+            guard window?.contentView is TitlebarBackgroundView else { return }
             window?.backgroundColor = view.underPageBackgroundColor
         }
         window.center()
@@ -327,6 +329,10 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(webView)
         NSApp.activate(ignoringOtherApps: true)
+        startupMessages = MusicStartupMessages(window: window) { [weak self] in self?.updates.checkForUpdates() }
+        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+            startupMessages.start(version: version)
+        }
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -350,8 +356,13 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        startupMessages?.cancelPending()
         sender.orderOut(nil)
         return false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        startupMessages?.dismiss()
     }
 
     @objc func refresh() {

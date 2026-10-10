@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Thanks for using — Music</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f1f1f1;
+      background: #030303;
+      -webkit-font-smoothing: antialiased;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main {
+      min-height: 100vh;
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .profile { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; }
+    h1 {
+      margin: 32px 0 16px;
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 650;
+      line-height: 1.12;
+      letter-spacing: -.025em;
+      text-wrap: balance;
+    }
+    .intro, .support { max-width: 440px; color: #aaa; font-size: 16px; line-height: 1.6; }
+    .intro { margin: 0; }
+    .support { margin: 14px 0 0; }
+    .actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 12px 24px;
+      border-radius: 999px;
+      color: #f1f1f1;
+      background: #282828;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.4;
+      transition: background-color 140ms ease-out;
+    }
+    .button:hover { background: #383838; }
+    .primary { color: #030303; background: #f1f1f1; }
+    .primary:hover { background: #d9d9d9; }
+    .button:active { background: #484848; }
+    .primary:active { background: #c8c8c8; }
+    .readme { margin-top: 28px; padding: 8px; color: #aaa; font-size: 13px; line-height: 1.5; text-underline-offset: 4px; }
+    .readme:hover { color: #f1f1f1; }
+    a:focus-visible { outline: 2px solid #f1f1f1; outline-offset: 5px; }
+    ::selection { background: #f1f1f1; color: #030303; }
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-thumb { background: #555; border-radius: 8px; }
+    ::-webkit-scrollbar-track { background: #030303; }
+    @media (max-width: 420px) {
+      .profile { width: 96px; height: 96px; }
+      .actions { width: 100%; max-width: 300px; flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) { .button { transition: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <img class="profile" src="channels4_profile.jpg" alt="indradprasetya’s profile: a fluffy green cat" width="120" height="120">
+    <h1>Thanks for using</h1>
+    <p class="intro">I hope Music makes your everyday listening a little better.</p>
+    <p class="support">Enjoying the app? A boba tea helps me keep improving it.<br>Thanks for your support. Happy listening!</p>
+    <nav class="actions" aria-label="Continue or support Music">
+      <a class="button primary" href="music-action://continue">Continue to App</a>
+      <a class="button" href="https://ko-fi.com/indradprasetya">Support my App 🧋</a>
+    </nav>
+    <a class="readme" href="https://github.com/indradprasetya/yt-music-webkit/blob/main/README.md">View Music pages</a>
+  </main>
+</body>
+</html>
