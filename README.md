@@ -3,9 +3,9 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Findradprasetya%2Fyt-music-webkit%2Freleases%2Flatest&query=%24.tag_name&label=version&color=0088cc&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
 [![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](https://github.com/indradprasetya/yt-music-webkit/releases)
 
-Music is a lightweight YouTube Music app for macOS, built with Swift and WebKit. Available for Apple Silicon and Intel Macs, with native playback controls and automatic update checks.
+Music brings YouTube Music to macOS in a lightweight app built with Swift and WebKit for Apple Silicon and Intel Macs. Enjoy your favorite tracks while you work or browse, without worrying about accidentally closing a browser tab. Your music keeps playing in the background, even when you close the app window.
 
-Music is designed with privacy and security in mind. It has no developer-operated backend and sends no personal data, analytics, or listening history to the developer. Official installers are signed and notarized, and update signatures are verified before installation. See [Privacy](#privacy) for details.
+Designed with privacy and security in mind, Music has no developer-operated backend and sends no personal data, analytics, or listening history to the developer. Official installers are signed with an Apple Developer ID and notarized by Apple. See [Privacy](#privacy) for details.
 
 <p align="center">
   <img src="docs/screenshots/music-window.png" alt="YouTube Music playing in the native macOS Music window" width="75%" style="display: block; margin: 0 auto;">
