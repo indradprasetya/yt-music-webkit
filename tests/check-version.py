@@ -17,8 +17,8 @@ with tempfile.TemporaryDirectory(prefix="music-version-check-") as directory:
     def git(*args):
         return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
-    def check(expected, tag="", cwd=repo):
-        result = subprocess.run(["bash", "scripts/release.sh", "--version", tag],
+    def check(expected, tag="", cwd=repo, rebuild=False):
+        result = subprocess.run(["bash", "scripts/release.sh", "--version", tag, *(["--rebuild"] if rebuild else [])],
                                 cwd=cwd, capture_output=True, text=True)
         if expected.startswith(("music-", "v")) or expected[:1].isdigit():
             assert result.returncode == 0, result.stderr
@@ -68,6 +68,27 @@ with tempfile.TemporaryDirectory(prefix="music-version-check-") as directory:
     log = next((repo / "dist").glob("release.*/build-arm64.log")).read_text().splitlines()
     assert "MARKETING_VERSION=1.1.1" in log and "CURRENT_PROJECT_VERSION=2" in log, log
 
+    check("newer commit", "v1.1.1", rebuild=True)
+    check("explicit existing release tag", rebuild=True)
+    git("commit", "--allow-empty", "-qm", "Rebuild current release")
+    check("tag on HEAD", "v1.1.1")
+    check("v1.1.1 1.1.1 3", "v1.1.1", rebuild=True)
+    check("Release version must be newer", "music-1.1.0", rebuild=True)
+    check("explicit existing release tag", "v9.9.9", rebuild=True)
+    unrelated = git("commit-tree", "HEAD^{tree}", "-m", "Unrelated history")
+    git("tag", "v2.0.0", unrelated)
+    check("ancestor of HEAD", "v2.0.0", rebuild=True)
+    git("tag", "-d", "v2.0.0")
+    git("tag", "v1.1.2")
+    (repo / "updates").mkdir()
+    feed = repo / "updates/appcast-arm64.xml"
+    feed.write_text('<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><item><sparkle:version>4</sparkle:version></item></channel></rss>')
+    git("add", "updates")
+    git("commit", "-qm", "Record release feed")
+    check("Build number must exceed 4", "v1.1.2", rebuild=True)
+    git("commit", "--allow-empty", "-qm", "Next build")
+    check("v1.1.2 1.1.2 5", "v1.1.2", rebuild=True)
+
     shallow = work / "shallow"
     subprocess.run(["git", "clone", "-q", "--depth=1", repo.as_uri(), str(shallow)], check=True)
     check("Fetch full history", cwd=shallow)
@@ -75,4 +96,4 @@ with tempfile.TemporaryDirectory(prefix="music-version-check-") as directory:
     git("tag", "1.0.9")
     check("Release version must be newer", "1.0.9")
     assert not (shallow / "dist").exists()
-print("PASS: tag versions, increasing builds, release build arguments, and invalid release states")
+print("PASS: tagged releases, same-version rebuilds, ancestor/latest-tag checks, increasing feed builds, and archive build arguments")
