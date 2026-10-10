@@ -14,11 +14,11 @@ Designed with privacy and security in mind, Music has no developer-operated back
 
 ## Download
 
-[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.2/Music-1.1.2-Apple-Silicon.dmg)<br>
+[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.3/Music-1.1.3-Apple-Silicon.dmg)<br>
 <span style="font-size: 0.8em;">For Macs with Apple Silicon chips: M1, M2, M3, and later.</span>
 
 
-[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.2/Music-1.1.2-Intel.dmg)<br>
+[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.1.3/Music-1.1.3-Intel.dmg)<br>
 <span style="font-size: 0.8em;">For Macs with an Intel processor.</span>
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
