@@ -1,11 +1,17 @@
-# Music
+# Music — YouTube Music for macOS
 
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Findradprasetya%2Fyt-music-webkit%2Freleases%2Flatest&query=%24.tag_name&label=version&color=0088cc&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
 [![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](https://github.com/indradprasetya/yt-music-webkit/releases)
 
-Music is a lightweight YouTube Music app for macOS, built with Swift and WebKit. It opens the YouTube Music website in its own window, where you can sign in and access your library and playlists. You can play, pause, and change tracks from macOS Now Playing.
+Music is a lightweight YouTube Music app for macOS, built with Swift and WebKit. Available for Apple Silicon and Intel Macs, with native playback controls and automatic update checks.
 
-Your music keeps playing when you close the window. Click the Music icon in the Dock to reopen it, or press Command-Q to quit the app. Available for Apple Silicon and Intel Macs.
+It opens the YouTube Music website in its own window, where you can sign in and access your library and playlists.
+
+Music is designed with privacy and security in mind. It has no developer-operated backend and sends no personal data, analytics, or listening history to the developer. Official installers are signed and notarized, and update signatures are verified before installation. See [Privacy](#privacy) for details.
+
+<p align="center">
+  <img src="docs/screenshots/music-window.png" alt="YouTube Music playing in the native macOS Music window" width="75%" style="display: block; margin: 0 auto;">
+</p>
 
 ## Download
 
@@ -18,15 +24,13 @@ Your music keeps playing when you close the window. Click the Music icon in the 
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
-## Screenshots
+## Features
 
-### Music window
+- **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
+- **Native Controls menu:** Control playback, volume, and mute, or choose Shuffle and Repeat Off, All, or One. Shuffle and Repeat stay in sync with YouTube Music.
+- **Background playback:** Music keeps playing when you close the window. Click the Dock icon to reopen it, or press Command-Q to quit.
 
-<p align="center">
-  <img src="docs/screenshots/music-window.png" alt="YouTube Music playing in the native macOS Music window" style="display: block; margin: 0 auto;">
-</p>
-
-### macOS Now Playing
+## macOS Now Playing
 
 <p align="center">
   <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="75%" style="display: block; margin: 0 auto;">
