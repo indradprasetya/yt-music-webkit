@@ -27,6 +27,10 @@ Designed with privacy and security in mind, Music has no developer-operated back
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
+Enjoying Music? A GitHub star helps other people discover it. After downloading, click **Star** on the repository page top corner.
+
+[![Star Music on GitHub](https://img.shields.io/badge/Star_Music-on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit)
+
 ## Features
 
 - **Native Controls menu:** Control playback, volume, and mute, or choose Shuffle and Repeat Off, All, or One. Shuffle and Repeat stay in sync with YouTube Music.
