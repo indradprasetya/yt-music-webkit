@@ -27,9 +27,9 @@ Designed with privacy and security in mind, Music has no developer-operated back
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
 
-Enjoying Music? A GitHub star helps other people discover it. After downloading, click **Star** on the repository page top corner.
+Enjoying Music? A GitHub star helps other people discover it. After downloading, use the button below to open the repository, then click **Star** in the top-right corner.
 
-[![Star Music on GitHub](https://img.shields.io/badge/Star_Music-on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit)
+[![Star Music on GitHub](https://img.shields.io/badge/Star_Music-on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://indradprasetya.github.io/yt-music-webkit/star.html)
 
 ## Features
 

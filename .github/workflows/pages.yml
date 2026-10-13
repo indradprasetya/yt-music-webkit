@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - docs/download.html
+      - docs/star.html
       - docs/messages/**
       - tests/check-download.js
       - tests/check-startup-content.py
