@@ -14,6 +14,7 @@
     .star:hover { background: #30363d; }
     .star:focus-visible { outline: 2px solid #f0f6fc; outline-offset: 4px; }
     .star-label { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; }
+    .star-hint { position: absolute; top: calc(100% + 16px); right: 0; color: #f2cc60; font-size: 14px; font-weight: 500; white-space: nowrap; }
     .star svg { width: 16px; height: 16px; fill: currentColor; }
     .count { padding: 3px 5px; border-radius: 10px; background: #30363d; font-size: 12px; }
     .caret { width: 27px; height: 100%; display: grid; place-items: center; border-left: 1px solid #3d444d; color: #8b949e; }
@@ -57,6 +58,7 @@
         Star <span class="count" aria-hidden="true">0</span>
       </span>
       <span class="caret" aria-hidden="true"></span>
+      <span class="star-hint" lang="id">Klik ini untuk Star</span>
     </a>
   </main>
 </body>
