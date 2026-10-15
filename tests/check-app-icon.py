@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory(prefix="music-icon-check-") as directory:
     result = subprocess.run([
         "xcrun", "actool", str(assets), "--compile", str(work), "--app-icon", "AppIcon",
         "--output-partial-info-plist", str(work / "Info.plist"), "--platform", "macosx",
-        "--minimum-deployment-target", "12.0", "--warnings", "--errors", "--notices",
+        "--minimum-deployment-target", "15.4", "--warnings", "--errors", "--notices",
         "--output-format", "human-readable-text",
     ], env=env, check=True, capture_output=True, text=True, timeout=60)
     assert "warning:" not in result.stdout + result.stderr, result.stdout + result.stderr

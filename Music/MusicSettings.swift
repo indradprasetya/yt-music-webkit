@@ -2,14 +2,22 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class MusicSettings: NSWindowController {
+    private final class ExtensionList: NSStackView {
+        override var isFlipped: Bool { true }
+    }
+
     private let icons: MusicAppIcons
+    private let extensions: MusicExtensions?
+    private var extensionRows: NSStackView?
+    private var extensionStatus: NSTextField?
     private var previews: [MusicAppIcons.Appearance: NSImageView] = [:]
     private var labels: [MusicAppIcons.Appearance: NSTextField] = [:]
     private var resetButton: NSButton!
     private var status: NSTextField!
 
-    init(icons: MusicAppIcons) {
+    init(icons: MusicAppIcons, extensions: MusicExtensions? = nil) {
         self.icons = icons
+        self.extensions = extensions
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 430),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
@@ -17,6 +25,7 @@ final class MusicSettings: NSWindowController {
         super.init(window: window)
         buildContent()
         icons.onChange = { [weak self] in self?.refresh() }
+        extensions?.onChange = { [weak self] in self?.refreshExtensions() }
         refresh()
         window.center()
     }
@@ -24,13 +33,38 @@ final class MusicSettings: NSWindowController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     @objc func show() {
+        extensions?.scan()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     private func buildContent() {
-        let host = window!.contentView!
+        let host: NSView
+        if extensions != nil {
+            let tabs = NSTabView(frame: window!.contentView!.bounds.insetBy(dx: 12, dy: 8))
+            tabs.translatesAutoresizingMaskIntoConstraints = false
+            // Size tab hosts before their fixed-size contents participate in layout.
+            let iconsTab = NSTabViewItem(identifier: "icons")
+            iconsTab.label = "App Icon"
+            iconsTab.view = NSView(frame: tabs.contentRect)
+            tabs.addTabViewItem(iconsTab)
+            let extensionsTab = NSTabViewItem(identifier: "extensions")
+            extensionsTab.label = "Extensions"
+            extensionsTab.view = NSView(frame: tabs.contentRect)
+            tabs.addTabViewItem(extensionsTab)
+            window!.contentView!.addSubview(tabs)
+            NSLayoutConstraint.activate([
+                tabs.leadingAnchor.constraint(equalTo: window!.contentView!.leadingAnchor, constant: 12),
+                tabs.trailingAnchor.constraint(equalTo: window!.contentView!.trailingAnchor, constant: -12),
+                tabs.topAnchor.constraint(equalTo: window!.contentView!.topAnchor, constant: 8),
+                tabs.bottomAnchor.constraint(equalTo: window!.contentView!.bottomAnchor, constant: -8)
+            ])
+            host = iconsTab.view!
+            buildExtensions(in: extensionsTab.view!)
+        } else {
+            host = window!.contentView!
+        }
         let heading = NSTextField(labelWithString: "App Icon")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let description = text("Choose an icon for each macOS icon style.")
@@ -71,6 +105,91 @@ final class MusicSettings: NSWindowController {
             columns.widthAnchor.constraint(equalTo: content.widthAnchor),
             status.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
+    }
+
+    private func buildExtensions(in host: NSView) {
+        let description = text("Extensions installed from the App Store appear here. Enable only extensions you trust.")
+        description.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let rows = ExtensionList()
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 12
+        rows.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        extensionRows = rows
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.documentView = rows
+        let status = text("")
+        status.textColor = .systemRed
+        extensionStatus = status
+        let refresh = NSButton(title: "Refresh", target: self, action: #selector(refreshExtensionList))
+        let getExtensions = NSButton(title: "Get Extensions…", target: self, action: #selector(browseExtensions))
+        getExtensions.toolTip = "Browse Safari extensions in the App Store."
+        getExtensions.setAccessibilityLabel("Get extensions, opens the App Store")
+        let actions = NSStackView(views: [refresh, getExtensions])
+        actions.spacing = 12
+        let content = NSStackView(views: [description, scroll, status, actions])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 16
+        content.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 28),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -28),
+            content.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor, constant: -24),
+            scroll.widthAnchor.constraint(equalTo: content.widthAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: 220),
+            rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            status.widthAnchor.constraint(equalTo: content.widthAnchor)
+        ])
+        refreshExtensions()
+    }
+
+    private func refreshExtensions() {
+        guard let extensions, let rows = extensionRows else { return }
+        for view in rows.arrangedSubviews { rows.removeArrangedSubview(view); view.removeFromSuperview() }
+        if extensions.entries.isEmpty { rows.addArrangedSubview(text("No Safari Web Extensions installed.")) }
+        for entry in extensions.entries {
+            let button = NSButton(checkboxWithTitle: entry.name, target: self, action: #selector(toggleExtension(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(entry.id)
+            button.state = extensions.isEnabled(entry) ? .on : .off
+            button.isEnabled = !extensions.isBusy(entry)
+            let open = NSButton(title: "Open", target: self, action: #selector(openExtension(_:)))
+            open.identifier = NSUserInterfaceItemIdentifier(entry.id)
+            let row = NSStackView(views: [button, open])
+            row.alignment = .centerY
+            row.detachesHiddenViews = false
+            open.isHidden = !extensions.hasAction(entry)
+            rows.addArrangedSubview(row)
+        }
+        extensionStatus?.stringValue = extensions.errorMessage ?? ""
+        extensionStatus?.isHidden = extensions.errorMessage == nil
+    }
+
+    @objc private func refreshExtensionList() { extensions?.scan() }
+
+    @objc private func browseExtensions() {
+        if !NSWorkspace.shared.open(URL(string: "macappstore://apps.apple.com/story/id1377753262?platform=mac")!) {
+            NSSound.beep()
+        }
+    }
+
+    @objc private func toggleExtension(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue,
+              let entry = extensions?.entries.first(where: { $0.id == id }) else { return }
+        extensions?.setEnabled(sender.state == .on, for: entry)
+    }
+
+    @objc private func openExtension(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue,
+              let entry = extensions?.entries.first(where: { $0.id == id }) else { return }
+        extensions?.performAction(for: entry, from: sender)
     }
 
     private func makeColumn(_ appearance: MusicAppIcons.Appearance) -> NSView {

@@ -120,7 +120,7 @@ with tarfile.open(work / "source.tar.gz", "w:gz") as archive:
 package = work / "Sparkle"
 package.mkdir()
 subprocess.run(["ditto", str(sparkle / "Sparkle.xcframework"), str(package / "Sparkle.xcframework")], check=True)
-(package / "Package.swift").write_text('// swift-tools-version:5.5\nimport PackageDescription\nlet package = Package(name: "Sparkle", platforms: [.macOS(.v12)], products: [.library(name: "Sparkle", targets: ["Sparkle"])], targets: [.binaryTarget(name: "Sparkle", path: "Sparkle.xcframework")])\n')
+(package / "Package.swift").write_text('// swift-tools-version:5.5\nimport PackageDescription\nlet package = Package(name: "Sparkle", platforms: [.macOS("15.4")], products: [.library(name: "Sparkle", targets: ["Sparkle"])], targets: [.binaryTarget(name: "Sparkle", path: "Sparkle.xcframework")])\n')
 project = source / "Music.xcodeproj/project.pbxproj"
 text = project.read_text()
 text, count = re.subn(r'isa = XCRemoteSwiftPackageReference;\s*repositoryURL = "https://github.com/sparkle-project/Sparkle";\s*requirement = \{[^}]+\};',

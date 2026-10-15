@@ -182,6 +182,7 @@ with tempfile.TemporaryDirectory(prefix="music-window-check-") as directory:
                     str(root / "Music/MusicUpdates.swift"), str(root / "Music/MusicReleaseNotes.swift"),
                     str(root / "Music/MusicStartupRules.swift"), str(root / "Music/MusicStartupMessages.swift"),
                     str(root / "Music/MusicAppIcons.swift"), str(root / "Music/MusicSettings.swift"),
+                    str(root / "Music/MusicExtensions.swift"),
                     "-o", str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
     # Failed assertions must not leave a restore-windows dialog blocking the next run.

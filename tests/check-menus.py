@@ -36,7 +36,58 @@ Task { @MainActor in
     assert(settingsItem.keyEquivalent == "," && settingsItem.target === self)
     showSettings()
     let settingsWindow = settings!.window!
-    assert(settingsWindow.contentView!.subviews.contains { $0 is NSStackView })
+    let settingsTabs = settingsWindow.contentView!.subviews.compactMap { $0 as? NSTabView }.first!
+    assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions"])
+    for index in [0, 1, 0, 1, 0] {
+        settingsTabs.selectTabViewItem(at: index)
+        settingsWindow.contentView!.layoutSubtreeIfNeeded()
+        assert(settingsTabs.selectedTabViewItem?.view?.subviews.contains { $0 is NSStackView } == true)
+        try! await Task.sleep(nanoseconds: 100_000_000)
+    }
+    settingsTabs.selectTabViewItem(at: 1)
+    settingsWindow.contentView!.layoutSubtreeIfNeeded()
+    let extensionContent = settingsTabs.selectedTabViewItem!.view!.subviews.first as! NSStackView
+    let extensionScroll = extensionContent.arrangedSubviews.compactMap { $0 as? NSScrollView }.first!
+    let rows = extensionScroll.documentView as! NSStackView
+    let clip = extensionScroll.contentView
+    let firstRow = rows.arrangedSubviews.first!
+    let rowRect = clip.convert(firstRow.bounds, from: firstRow)
+    let topPadding = clip.isFlipped ? rowRect.minY - clip.bounds.minY : clip.bounds.maxY - rowRect.maxY
+    assert(abs(topPadding - 16) < 1, "Extension list starts at the top with padding")
+    assert(abs(rowRect.minX - clip.bounds.minX - 16) < 1, "Extension rows have left padding")
+    let actions = extensionContent.arrangedSubviews.last as! NSStackView
+    let getExtensions = actions.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "Get Extensions…" }!
+    assert(getExtensions.isEnabled && getExtensions.target === settings && getExtensions.action != nil)
+    let extraRows = (1...20).map { NSTextField(labelWithString: "Extension \($0)") }
+    extraRows.forEach { rows.addArrangedSubview($0) }
+    settingsWindow.contentView!.layoutSubtreeIfNeeded()
+    for view in rows.arrangedSubviews where !(view is NSTextField) {
+        guard let row = view as? NSStackView else { fatalError("Reserve the action button's space in every extension row") }
+        let checkbox = row.arrangedSubviews.first as! NSButton
+        let open = row.arrangedSubviews.last as! NSButton
+        assert(open.title == "Open")
+        let hidden = open.isHidden
+        let checkboxFrame = rows.convert(checkbox.bounds, from: checkbox)
+        let rowFrames = rows.arrangedSubviews.map(\.frame)
+        for showAction in [true, false] {
+            open.isHidden = !showAction
+            settingsWindow.contentView!.layoutSubtreeIfNeeded()
+            assert(rows.convert(checkbox.bounds, from: checkbox) == checkboxFrame,
+                   "Showing Open must not move or resize the checkbox")
+            assert(rows.arrangedSubviews.map(\.frame) == rowFrames,
+                   "Showing Open must not change row padding or shift later extensions")
+        }
+        open.isHidden = hidden
+    }
+    print("PASS: extension row positions stay fixed when Open appears or disappears")
+    assert(rows.frame.height > clip.bounds.height, "Long extension lists can scroll")
+    let lastRow = extraRows.last!
+    lastRow.scrollToVisible(lastRow.bounds)
+    assert(clip.bounds.contains(clip.convert(lastRow.bounds, from: lastRow)), "The last extension is reachable")
+    extraRows.forEach { rows.removeArrangedSubview($0); $0.removeFromSuperview() }
+    settingsWindow.contentView!.layoutSubtreeIfNeeded()
+    print("PASS: extension list top alignment, padding, scrolling, and App Store button")
+    settingsWindow.performClose(nil)
     showSettings()
     assert(settings!.window === settingsWindow, "Reuse the settings window")
     settingsWindow.performClose(nil)
@@ -215,6 +266,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     str(root / 'Music/MusicUpdates.swift'), str(root / 'Music/MusicReleaseNotes.swift'),
                     str(root / 'Music/MusicStartupRules.swift'), str(root / 'Music/MusicStartupMessages.swift'),
                     str(root / 'Music/MusicAppIcons.swift'), str(root / 'Music/MusicSettings.swift'),
+                    str(root / 'Music/MusicExtensions.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))
     with subprocess.Popen([str(binary)]) as process:
@@ -227,4 +279,4 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                           check=True, capture_output=True, text=True)
     conflicts = json.loads(logs.stdout)
     assert not conflicts, '\n'.join(entry['eventMessage'] for entry in conflicts)
-    print('PASS: opening and reopening Settings produces no constraint warnings')
+    print('PASS: opening, switching, and reopening Settings produces no constraint warnings')

@@ -7,6 +7,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var updates: MusicUpdates!
     private var startupMessages: MusicStartupMessages!
     private let appIcons = MusicAppIcons()
+    private let extensions = MusicExtensions()
     private var settings: MusicSettings?
     private var backgroundObservation: NSKeyValueObservation?
     private var playbackState: [String: Bool] = [:]
@@ -26,6 +27,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         window.titlebarAppearsTransparent = true
         let titlebarHeight = window.contentView!.bounds.height - window.contentLayoutRect.height
         let configuration = WKWebViewConfiguration()
+        configuration.webExtensionController = extensions.controller
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(self, name: "playbackState")
@@ -313,6 +315,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         }
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         webView = WKWebView(frame: .zero, configuration: configuration)
+        extensions.attach(webView: webView, window: window)
         webView.uiDelegate = self
         webView.navigationDelegate = self
         let safariVersion = Bundle(url: URL(fileURLWithPath: "/Applications/Safari.app"))?
@@ -375,7 +378,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     @objc private func showSettings() {
-        if settings == nil { settings = MusicSettings(icons: appIcons) }
+        if settings == nil { settings = MusicSettings(icons: appIcons, extensions: extensions) }
         settings?.show()
     }
 
@@ -437,15 +440,20 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         repeatMenu.update()
     }
 
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { resetPlayback() }
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        resetPlayback()
+        extensions.pageChanged()
+    }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         resetPlayback()
+        extensions.pageChanged()
         // Sign-in and other external pages retain the normal native content area.
         (window.contentView as? TitlebarBackgroundView)?.extendsUnderTitlebar = musicURL != nil
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { resetPlayback() }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        extensions.pageChanged()
         if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
     }
 
