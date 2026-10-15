@@ -10,9 +10,6 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 assets = root / "Music/Assets.xcassets"
-source = (root / "Music/main.swift").read_text()
-assert "applicationIconImage =" not in source, "Let macOS select icon style independently of app theme"
-assert "iconAppearanceObservation" not in source
 assert not list((root / "Music").glob("*.icon")), "No Icon Composer document required"
 info = plistlib.loads((root / "Music/Info.plist").read_bytes())
 assert info["CFBundleIconName"] == info["CFBundleIconFile"] == "AppIcon"
@@ -57,4 +54,4 @@ with tempfile.TemporaryDirectory(prefix="music-icon-check-") as directory:
     assert variants <= {entry.get("Name") for entry in catalog}, "All six exports must be bundled"
     compiled_info = plistlib.loads((work / "Info.plist").read_bytes())
     assert compiled_info["CFBundleIconName"] == compiled_info["CFBundleIconFile"] == "AppIcon"
-print("PASS: six bundled exports, native default/dark/tintable icons, matching ICNS artwork, and no runtime icon override")
+print("PASS: six bundled exports, native default/dark/tintable icons, and matching ICNS artwork")

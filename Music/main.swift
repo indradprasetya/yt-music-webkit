@@ -6,12 +6,15 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var webView: WKWebView!
     private var updates: MusicUpdates!
     private var startupMessages: MusicStartupMessages!
+    private let appIcons = MusicAppIcons()
+    private var settings: MusicSettings?
     private var backgroundObservation: NSKeyValueObservation?
     private var playbackState: [String: Bool] = [:]
     private let playbackMenu = NSMenu(title: "Controls")
     private let repeatMenu = NSMenu(title: "Repeat")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        appIcons.start()
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -371,6 +374,11 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         webView.reload()
     }
 
+    @objc private func showSettings() {
+        if settings == nil { settings = MusicSettings(icons: appIcons) }
+        settings?.show()
+    }
+
     private var musicURL: URL? {
         guard let url = webView.url, url.scheme == "https", url.host == "music.youtube.com" else { return nil }
         return url
@@ -450,6 +458,8 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         menu.webView = webView
         let appMenu = NSMenu(title: "Music")
         appMenu.addItem(withTitle: "About Music", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
         let services = NSMenu(title: "Services")
         appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = services

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the real AppKit menus and WebKit bridge with an offline player fixture."""
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -13,7 +14,7 @@ checks = r'''
 Task { @MainActor in
     setbuf(stdout, nil)
     @MainActor func waitFor(_ condition: () -> Bool) async {
-        for _ in 0..<200 {
+        for _ in 0..<400 {
             if condition() { return }
             try! await Task.sleep(nanoseconds: 20_000_000)
         }
@@ -31,6 +32,14 @@ Task { @MainActor in
     let windows = menu.items[5].submenu!
     let help = menu.items[6].submenu!
     assert(appMenu.items[2].title == "Check for Updates…")
+    let settingsItem = appMenu.items.first { $0.title == "Settings…" }!
+    assert(settingsItem.keyEquivalent == "," && settingsItem.target === self)
+    showSettings()
+    let settingsWindow = settings!.window!
+    assert(settingsWindow.contentView!.subviews.contains { $0 is NSStackView })
+    showSettings()
+    assert(settings!.window === settingsWindow, "Reuse the settings window")
+    settingsWindow.performClose(nil)
     assert(appMenu.items.contains { $0.submenu === NSApp.servicesMenu })
     assert(NSApp.windowsMenu === windows && NSApp.helpMenu === help)
     assert(help.items.filter { !$0.isSeparatorItem }.map(\.title) == ["Report an Issue…", "What’s New…"])
@@ -196,7 +205,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
     (app / 'Info.plist').write_bytes(plistlib.dumps(info))
     source = (root / 'Music/main.swift').read_text()
     source = source.replace('webView.load(URLRequest(url: URL(string: "https://music.youtube.com/")!))', '')
-    source = source.replace('startupMessages.start(version: version)', '')
+    source = source.replace('startupMessages.start(version: version)', '_ = version')
     script = work / 'main.swift'
     script.write_text(source.replace('NSApp.activate(ignoringOtherApps: true)',
                                     'NSApp.activate(ignoringOtherApps: true)\n' + checks, 1))
@@ -205,6 +214,17 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     '-Xlinker', '-rpath', '-Xlinker', str(frameworks), str(script),
                     str(root / 'Music/MusicUpdates.swift'), str(root / 'Music/MusicReleaseNotes.swift'),
                     str(root / 'Music/MusicStartupRules.swift'), str(root / 'Music/MusicStartupMessages.swift'),
+                    str(root / 'Music/MusicAppIcons.swift'), str(root / 'Music/MusicSettings.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))
-    subprocess.run([str(binary)], check=True, timeout=30)
+    with subprocess.Popen([str(binary)]) as process:
+        assert process.wait(timeout=30) == 0, 'Menu/player checks failed'
+    # AppKit writes constraint failures to the unified log, not stderr.
+    logs = subprocess.run(['/usr/bin/log', 'show', '--style', 'json', '--last', '2m',
+                           '--predicate', f'processIdentifier == {process.pid} AND '
+                           '(eventMessage CONTAINS "Conflicting constraints" OR '
+                           'eventMessage CONTAINS "Unable to simultaneously satisfy constraints")'],
+                          check=True, capture_output=True, text=True)
+    conflicts = json.loads(logs.stdout)
+    assert not conflicts, '\n'.join(entry['eventMessage'] for entry in conflicts)
+    print('PASS: opening and reopening Settings produces no constraint warnings')
