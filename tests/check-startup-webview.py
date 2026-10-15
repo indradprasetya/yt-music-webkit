@@ -28,15 +28,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif scenario == "once-new":
                 rule["id"] = "next-warning"
             body = json.dumps({"schemaVersion": 1, "rules": [rule]}).encode()
-            if scenario == "updated":
+            if scenario == "announcement":
                 body = (pages / "manifest.json").read_bytes()
+            elif scenario == "updated":
+                body = json.dumps({"schemaVersion": 1, "rules": [
+                    {"enabled": True, "launches": ["versionChanged"], "page": "updated.html"}
+                ]}).encode()
             mime = "application/json"
         elif name == "channels4_profile.jpg":
             body = (pages / name).read_bytes()
             mime = "image/jpeg"
+        elif name in {"music-light.png", "music-dark.png"}:
+            body = (pages / name).read_bytes()
+            mime = "image/png"
         elif name == "message.css":
             body = (pages / name).read_bytes()
             mime = "text/css"
+        elif scenario == "announcement":
+            body = (pages / "update-available-120.html").read_bytes()
         else:
             body = (pages / ("updated.html" if scenario == "updated" else "welcome.html")).read_bytes()
             if scenario == "missing":
@@ -113,7 +122,7 @@ Task { @MainActor in
     assert(page().configuration.defaultWebpagePreferences.allowsContentJavaScript == false)
     await expectJS("document.querySelector('img').naturalWidth > 0")
     await expectJS("document.documentElement.scrollWidth <= innerWidth")
-    await expectJS("document.querySelector('h1').innerText === 'Thanks for using'")
+    await expectJS("document.querySelector('h1').innerText === 'Welcome to Music'")
     await expectJS("getComputedStyle(document.documentElement).backgroundColor === 'rgb(3, 3, 3)'")
     if let preview {
         try! await Task.sleep(nanoseconds: 300_000_000)
@@ -156,6 +165,32 @@ Task { @MainActor in
     assert(window.contentView !== original, "What's New must leave the startup page available")
     _ = await js("document.querySelector('a[href=\"music-action://continue\"]').click()")
     await waitFor { window.contentView === original }
+    start("announcement")
+    await waitFor { window.contentView !== original }
+    await expectJS("document.querySelector('h1').innerText === 'New update available'")
+    await expectJS("document.querySelectorAll('link[rel=stylesheet]').length === 0")
+    await expectJS("getComputedStyle(document.documentElement).backgroundColor === 'rgb(3, 3, 3)'")
+    await expectJS("getComputedStyle(document.querySelector('.features li')).display === 'grid'")
+    await expectJS("Array.from(document.images).every(image => image.naturalWidth > 0)")
+    assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "music-120-announcement"))
+    if let preview {
+        for (name, width, height) in [("announcement-desktop", 1200, 800), ("announcement-small-window", 640, 580), ("announcement-narrow", 390, 844)] {
+            window.setContentSize(NSSize(width: width, height: height))
+            window.contentView!.layoutSubtreeIfNeeded()
+            try! await Task.sleep(nanoseconds: 300_000_000)
+            await expectJS("document.documentElement.scrollWidth <= innerWidth")
+            await expectJS("document.querySelector('.actions').getBoundingClientRect().bottom <= innerHeight")
+            await snapshot("\(preview)/\(name).png")
+        }
+    }
+    _ = await js("document.querySelector('a[href=\"music-action://update\"]').click()")
+    await waitFor { updateCount == 2 }
+    assert(window.contentView !== original, "The update checker must leave Continue available")
+    _ = await js("document.querySelector('a[href=\"music-action://continue\"]').click()")
+    await waitFor { window.contentView === original }
+    start("announcement")
+    try! await Task.sleep(nanoseconds: 500_000_000)
+    assert(window.contentView === original, "The 1.2.0 announcement must only appear once")
     start("success")
     await waitFor { window.contentView !== original }
     let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,

@@ -3,6 +3,12 @@
   "rules": [
     {
       "enabled": true,
+      "id": "music-120-announcement",
+      "versions": ["1.1.3"],
+      "page": "update-available-120.html"
+    },
+    {
+      "enabled": true,
       "launches": ["firstLaunch"],
       "page": "welcome.html"
     },

@@ -112,6 +112,18 @@ Task {
         await expect("9.0.4", nil)
         assert(defaults.string(forKey: MusicStartupRules.versionKey) == "1.2.0")
     }
+    MessageProtocol.body = try! String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
+    defaults.removePersistentDomain(forName: domain)
+    let announcement = await check("1.1.3")
+    assert(announcement?.id == "music-120-announcement")
+    assert(announcement?.url.lastPathComponent == "update-available-120.html")
+    announcement!.markShown(defaults: defaults)
+    await expect("1.1.3", nil)
+    await expect("1.2.0", "updated.html")
+    defaults.removePersistentDomain(forName: domain)
+    await expect("1.2.0", "welcome.html")
+    defaults.set("1.1.3", forKey: MusicStartupRules.versionKey)
+    await expect("1.1.3", "update-available-120.html")
     for request in MessageProtocol.requests {
         assert(request.url == endpoint, "No version or user identifier is sent")
         assert(request.timeoutInterval == 3)
@@ -125,4 +137,4 @@ CFRunLoopRun()
 with tempfile.TemporaryDirectory(prefix="music-startup-rules-") as directory:
     script = Path(directory) / "main.swift"
     script.write_text((root / "Music/MusicStartupRules.swift").read_text() + "\n" + checks)
-    subprocess.run(["xcrun", "swift", str(script)], check=True, timeout=90)
+    subprocess.run(["xcrun", "swift", str(script), str(root / "docs/messages/manifest.json")], check=True, timeout=90)
