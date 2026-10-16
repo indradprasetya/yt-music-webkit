@@ -39,10 +39,10 @@ Enjoying Music? Give it a **Star** on GitHub to help others discover it.
 - **Native Controls menu:** Control playback, volume, and mute, or choose Shuffle and Repeat Off, All, or One. Shuffle and Repeat stay in sync with YouTube Music.
 - **Background playback:** Music keeps playing when you close the window. Click the Dock icon to reopen it, or press Command-Q to quit.
 - **Custom app icons:** Personalize Music with your own Light and Dark icons. Your choices stay saved across updates.
-- **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 - **Extensions:** Use your favorite compatible Safari Web Extensions from the App Store in Music.
+- **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 <p>
-  <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="50%">
+  <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="65%">
 </p>
 
 ## Privacy
