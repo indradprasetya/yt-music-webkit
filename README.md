@@ -2,7 +2,7 @@
   <img src="Music/Assets.xcassets/Light.imageset/light.png" alt="Music app icon" width="128" height="128">
 </p>
 
-# Music — Lightweight YouTube Music Desktop App for macOS with Safari Web Extensions Support
+# Music: Lightweight YouTube Music Desktop App for macOS with Safari Web Extensions Support
 
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Findradprasetya%2Fyt-music-webkit%2Freleases%2Flatest&query=%24.tag_name&label=version&color=0088cc&style=for-the-badge)](https://github.com/indradprasetya/yt-music-webkit/releases)
 [![Downloads](https://img.shields.io/github/downloads/indradprasetya/yt-music-webkit/total?style=for-the-badge&color=44cc11&label=downloads)](#download)
