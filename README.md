@@ -40,10 +40,19 @@ Enjoying Music? Give it a **Star** on GitHub to help others discover it.
 - **Background playback:** Music keeps playing when you close the window. Click the Dock icon to reopen it, or press Command-Q to quit.
 - **Custom app icons:** Personalize Music with your own Light and Dark icons. Your choices stay saved across updates.
 - **Extensions:** Use your favorite compatible Safari Web Extensions from the App Store in Music.
+- **Custom scripts:** Import local JavaScript in Settings → Scripts. New scripts start disabled. Enable a script and click Apply Scripts to reload YouTube Music while Settings stays open.
 - **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 <p>
   <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="65%">
 </p>
+
+Native app communication used by some Safari extensions is unavailable in Music. Refresh List checks installed extensions; Apply Extensions reloads the page to apply your choices and keeps Settings open.
+
+## Custom scripts
+
+In Settings → Scripts, import a local `.js` file, enable its checkbox, and click Apply Scripts. Imports start disabled; enabled choices are saved across restarts. Removing a script deletes Music’s saved copy and leaves the original file unchanged. Applying changes reloads the page and may interrupt playback.
+
+Scripts must be standalone UTF-8 `.js` files up to 1 MB. They run after the document loads by default, in a separate JavaScript world with access to the page DOM. Supported userscript metadata includes `@name`, `@grant none`, `@match https://music.youtube.com/*` (also `*://music.youtube.com/*`), and `@run-at document-start` or `document-end`. Metadata such as description, author, version, and license is accepted; `@noframes` is always enforced. Privileged `GM_*`/`GM.*` APIs, access to the page’s JavaScript variables, external `@require` dependencies, automatic updates, and other userscript directives are unsupported. Unsupported metadata and invalid JavaScript are reported when importing.
 
 ## Privacy
 
@@ -52,6 +61,8 @@ Music does not collect personal data or send analytics, telemetry, or listening 
 Music displays the YouTube Music website using WebKit. Google/YouTube may collect and process data when you sign in, listen, or interact with the service, as described in [Google's Privacy Policy](https://policies.google.com/privacy). WebKit stores cookies and website data locally on your Mac to maintain your session.
 
 Extensions you enable may read or change YouTube Music pages and access other sites or browser data according to the permissions you approve. Music stores your enabled extensions and approvals locally. The extension developer, not Music, controls any data its extension collects or sends.
+
+Custom scripts are stored locally and run only in the main frame at `https://music.youtube.com`. They can read and change the page, so import only scripts you trust. Script authors control any network requests their code makes.
 
 Update checks, installer downloads, What's New, and startup message checks contact GitHub or GitHub Pages. These requests share standard connection information, such as your IP address, with GitHub under its [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). Startup messages use a separate, temporary web session without your YouTube cookies. The last successfully checked app version and IDs of one-time messages already shown stay on your Mac; neither is sent with message checks.
 

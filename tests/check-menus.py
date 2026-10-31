@@ -37,8 +37,8 @@ Task { @MainActor in
     showSettings()
     let settingsWindow = settings!.window!
     let settingsTabs = settingsWindow.contentView!.subviews.compactMap { $0 as? NSTabView }.first!
-    assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions"])
-    for index in [0, 1, 0, 1, 0] {
+    assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts"])
+    for index in [0, 1, 2, 0, 2, 1, 0] {
         settingsTabs.selectTabViewItem(at: index)
         settingsWindow.contentView!.layoutSubtreeIfNeeded()
         assert(settingsTabs.selectedTabViewItem?.view?.subviews.contains { $0 is NSStackView } == true)
@@ -241,6 +241,25 @@ Task { @MainActor in
     _ = await js("webkit.messageHandlers.playbackState.postMessage({playpause:true,editing:false}); null")
     try! await Task.sleep(nanoseconds: 100_000_000)
     assert(!validateMenuItem(play) && menu.editing, "Ignore messages from the login origin")
+    let reloadFixture = FileManager.default.temporaryDirectory.appendingPathComponent("music-reload-\(UUID().uuidString).html")
+    try! Data("<!doctype html><html><body>Reload fixture</body></html>".utf8).write(to: reloadFixture)
+    defer { try? FileManager.default.removeItem(at: reloadFixture) }
+    let previousNavigation = webView.loadFileURL(reloadFixture, allowingReadAccessTo: reloadFixture.deletingLastPathComponent())
+    await waitFor { !webView.isLoading }
+    showSettings()
+    await waitFor { !extensions.isWorking }
+    settingsTabs.selectTabViewItem(at: 1)
+    let applyExtensions = actions.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "Apply Extensions" }!
+    assert(applyExtensions.isEnabled)
+    assert(NSApp.sendAction(applyExtensions.action!, to: applyExtensions.target, from: applyExtensions))
+    assert(settingsReload != nil && !applyExtensions.isEnabled, "Apply must track the reload before navigation finishes")
+    let activeReload = settingsReload
+    finishSettingsReload(previousNavigation, error: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+    assert(settingsReload === activeReload && !applyExtensions.isEnabled, "An older navigation must not finish a new Apply")
+    await waitFor { settingsReload == nil }
+    assert(applyExtensions.isEnabled && settingsWindow.isVisible)
+    settingsWindow.close()
+    print("PASS: Apply follows its own real navigation and ignores stale completion events")
     print("PASS: native menus, WebKit dispatch, focus-safe shortcuts, window actions, full screen, and origin validation")
     exit(0)
 }
@@ -267,6 +286,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     str(root / 'Music/MusicStartupRules.swift'), str(root / 'Music/MusicStartupMessages.swift'),
                     str(root / 'Music/MusicAppIcons.swift'), str(root / 'Music/MusicSettings.swift'),
                     str(root / 'Music/MusicExtensions.swift'),
+                    str(root / 'Music/MusicScripts.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))
     with subprocess.Popen([str(binary)]) as process:

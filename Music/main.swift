@@ -8,7 +8,9 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private var startupMessages: MusicStartupMessages!
     private let appIcons = MusicAppIcons()
     private let extensions = MusicExtensions()
+    private let scripts = MusicScripts()
     private var settings: MusicSettings?
+    private var settingsReload: WKNavigation?
     private var backgroundObservation: NSKeyValueObservation?
     private var playbackState: [String: Bool] = [:]
     private let playbackMenu = NSMenu(title: "Controls")
@@ -314,6 +316,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             schedule();
         }
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        scripts.apply(to: configuration.userContentController)
         webView = WKWebView(frame: .zero, configuration: configuration)
         extensions.attach(webView: webView, window: window)
         webView.uiDelegate = self
@@ -374,15 +377,24 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     @objc func refresh() {
-        if webView.reload() == nil {
+        scripts.apply(to: webView.configuration.userContentController)
+        settingsReload = webView.reload()
+        if settingsReload == nil {
             settings?.pageLoadFinished(error: NSError(domain: "Music", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "No page is open. Try again after YouTube Music loads."]))
         }
     }
 
+    private func finishSettingsReload(_ navigation: WKNavigation?, error: Error? = nil) {
+        guard let settingsReload, navigation === settingsReload else { return }
+        self.settingsReload = nil
+        settings?.pageLoadFinished(error: error)
+    }
+
     @objc private func showSettings() {
         if settings == nil {
-            settings = MusicSettings(icons: appIcons, extensions: extensions, reloadPage: { [weak self] in self?.refresh() })
+            settings = MusicSettings(icons: appIcons, extensions: extensions, scripts: scripts,
+                reloadPage: { [weak self] in self?.refresh() })
         }
         settings?.show()
     }
@@ -457,23 +469,24 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         resetPlayback()
+        settingsReload = nil
         settings?.pageLoadFinished(error: NSError(domain: "Music", code: 2,
             userInfo: [NSLocalizedDescriptionKey: "The page stopped responding. Try Apply again."]))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         extensions.pageChanged()
-        settings?.pageLoadFinished()
+        finishSettingsReload(navigation)
         if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        settings?.pageLoadFinished(error: error)
+        finishSettingsReload(navigation, error: error)
         if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        settings?.pageLoadFinished(error: error)
+        finishSettingsReload(navigation, error: error)
     }
 
     private func makeMenu() {

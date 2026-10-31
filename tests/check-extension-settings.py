@@ -3,7 +3,6 @@
 from pathlib import Path
 import os
 import subprocess
-import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
@@ -20,12 +19,18 @@ app.finishLaunching()
 @MainActor func check() async throws {
 let icons = MusicAppIcons(storageURL: URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("icons.plist"))
 let extensions = MusicExtensions()
+let scriptStorage = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("scripts.plist")
+let scripts = MusicScripts(storageURL: scriptStorage)
+let imported = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("test.js")
+try Data("document.body.dataset.example = 'enabled';".utf8).write(to: imported)
+try scripts.importScript(from: imported)
 var reloads = 0
-let settings = MusicSettings(icons: icons, extensions: extensions, reloadPage: { reloads += 1 })
+let settings = MusicSettings(icons: icons, extensions: extensions, scripts: scripts, reloadPage: { reloads += 1 })
 settings.show()
 let window = settings.window!
 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
 let tabs = descendants(window.contentView!).compactMap { $0 as? NSTabView }.first!
+assert(tabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts"])
 tabs.selectTabViewItem(at: 1)
 window.contentView!.layoutSubtreeIfNeeded()
 let deadline = Date(timeIntervalSinceNow: 10)
@@ -53,28 +58,42 @@ apply.performClick(nil)
 settings.pageLoadFinished(error: NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Offline"]))
 assert(apply.isEnabled && window.isVisible, "A failed navigation must allow retry without losing Settings")
 assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Offline") })
+tabs.selectTabViewItem(at: 2)
+window.contentView!.layoutSubtreeIfNeeded()
+let scriptButtons = descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }
+let scriptToggle = scriptButtons.first { $0.identifier?.rawValue == scripts.entries[0].id.uuidString }!
+assert(scriptToggle.state == .off, "Imported scripts are OFF in Settings")
+scriptToggle.performClick(nil)
+assert(scripts.entries[0].isEnabled)
+let applyScripts = scriptButtons.first { $0.title == "Apply Scripts" }!
+let previousReloads = reloads
+applyScripts.performClick(nil)
+assert(reloads == previousReloads + 1 && window.isVisible && !applyScripts.isEnabled)
+assert(!apply.isEnabled, "Do not apply another tab while the shared page is reloading")
+settings.pageLoadFinished()
+assert(applyScripts.isEnabled && window.isVisible && tabs.selectedTabViewItem?.identifier as? String == "scripts")
+let backup = scriptStorage.appendingPathExtension("backup")
+try FileManager.default.moveItem(at: scriptStorage, to: backup)
+try FileManager.default.createDirectory(at: scriptStorage, withIntermediateDirectories: false)
+let savedToggle = descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == scripts.entries[0].id.uuidString }!
+savedToggle.performClick(nil)
+assert(scripts.entries[0].isEnabled, "A failed toggle must preserve the saved state")
+try FileManager.default.removeItem(at: scriptStorage)
+try FileManager.default.moveItem(at: backup, to: scriptStorage)
+applyScripts.performClick(nil)
+assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Reloading YouTube Music…" }, "Apply must replace an earlier operation error with current progress")
+settings.pageLoadFinished()
+assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Changes applied." })
 
 let resources = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("native-extension")
 try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
 try Data(#"{"manifest_version":3,"name":"Native Example","version":"1.0","permissions":["nativeMessaging"]}"#.utf8).write(to: resources.appendingPathComponent("manifest.json"))
-    let context = WKWebExtensionContext(for: try await WKWebExtension(resourceBaseURL: resources))
-    extensions.webExtensionController(extensions.controller, sendMessage: ["name": "REQ_PLATFORM"], toApplicationWithIdentifier: "app", for: context) { reply, error in
-        assert(reply == nil && error?.localizedDescription.contains("Music") == true)
-    }
-    print("PASS: Refresh List, Apply stays open, reload retry, and explicit native messaging limitation")
-    if CommandLine.arguments.count > 2 {
-        let destination = URL(fileURLWithPath: CommandLine.arguments[2])
-        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            window.appearance = NSAppearance(named: appearance)
-            window.contentView!.layoutSubtreeIfNeeded()
-            let view = window.contentView!
-            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
-            view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])!.write(to: destination.appendingPathComponent("extensions-\(name).png"))
-        }
-    }
-    window.close()
+let context = WKWebExtensionContext(for: try await WKWebExtension(resourceBaseURL: resources))
+extensions.webExtensionController(extensions.controller, sendMessage: ["name": "REQ_PLATFORM"], toApplicationWithIdentifier: "app", for: context) { reply, error in
+    assert(reply == nil && error?.localizedDescription.contains("Music") == true)
+}
+print("PASS: Refresh List, both Apply actions stay open, reload retry, default OFF, and native messaging limitation")
+window.close()
 }
 Task { @MainActor in
     do { try await check(); exit(0) }
@@ -84,7 +103,7 @@ RunLoop.main.run()
 ''')
     binary = work / "check-settings"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5",
-                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicSettings")],
+                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicScripts", "MusicSettings")],
                     str(source), "-o", str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
-    subprocess.run([str(binary), str(work), *sys.argv[1:]], check=True, timeout=20)
+    subprocess.run([str(binary), str(work)], check=True, timeout=20)
