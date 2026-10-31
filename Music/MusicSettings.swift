@@ -2,6 +2,15 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class MusicSettings: NSWindowController {
+    private final class Panes: NSTabViewController {
+        var onSelection: ((NSTabViewItem) -> Void)?
+
+        override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+            super.tabView(tabView, didSelect: tabViewItem)
+            if let tabViewItem { onSelection?(tabViewItem) }
+        }
+    }
+
     private final class ExtensionList: NSStackView {
         override var isFlipped: Bool { true }
     }
@@ -31,7 +40,7 @@ final class MusicSettings: NSWindowController {
         self.extensions = extensions
         self.scripts = scripts
         self.reloadPage = reloadPage
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.isReleasedWhenClosed = false
@@ -54,6 +63,9 @@ final class MusicSettings: NSWindowController {
     @objc func show() {
         extensions?.scan()
         showWindow(nil)
+        window?.toolbar?.allowsUserCustomization = false
+        window?.toolbar?.allowsDisplayModeCustomization = false
+        window?.toolbar?.displayMode = .iconAndLabel
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -61,41 +73,38 @@ final class MusicSettings: NSWindowController {
     private func buildContent() {
         let host: NSView
         if extensions != nil || scripts != nil {
-            let tabs = NSTabView(frame: window!.contentView!.bounds.insetBy(dx: 12, dy: 8))
-            tabs.translatesAutoresizingMaskIntoConstraints = false
-            // Size tab hosts before their fixed-size contents participate in layout.
-            let iconsTab = NSTabViewItem(identifier: "icons")
-            iconsTab.label = "App Icon"
-            iconsTab.view = NSView(frame: tabs.contentRect)
-            tabs.addTabViewItem(iconsTab)
+            let panes = Panes()
+            panes.tabStyle = .toolbar
+            panes.transitionOptions = []
+            panes.canPropagateSelectedChildViewControllerTitle = true
+            panes.view.frame = NSRect(x: 0, y: 0, width: 560, height: 420)
+            func addPane(_ identifier: String, title: String, symbol: String) -> NSView {
+                let controller = NSViewController()
+                controller.title = title
+                controller.view = NSView(frame: panes.view.bounds)
+                controller.preferredContentSize = panes.view.bounds.size
+                let item = NSTabViewItem(viewController: controller)
+                item.identifier = identifier
+                item.label = title
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+                panes.addTabViewItem(item)
+                return controller.view
+            }
+            host = addPane("icons", title: "App Icon", symbol: "app")
             if extensions != nil {
-                let extensionsTab = NSTabViewItem(identifier: "extensions")
-                extensionsTab.label = "Extensions"
-                extensionsTab.view = NSView(frame: tabs.contentRect)
-                tabs.addTabViewItem(extensionsTab)
-                buildExtensions(in: extensionsTab.view!)
+                buildExtensions(in: addPane("extensions", title: "Extensions", symbol: "puzzlepiece.extension"))
             }
             if scripts != nil {
-                let scriptsTab = NSTabViewItem(identifier: "scripts")
-                scriptsTab.label = "Scripts"
-                scriptsTab.view = NSView(frame: tabs.contentRect)
-                tabs.addTabViewItem(scriptsTab)
-                buildScripts(in: scriptsTab.view!)
+                buildScripts(in: addPane("scripts", title: "Scripts", symbol: "applescript"))
             }
-            window!.contentView!.addSubview(tabs)
-            NSLayoutConstraint.activate([
-                tabs.leadingAnchor.constraint(equalTo: window!.contentView!.leadingAnchor, constant: 12),
-                tabs.trailingAnchor.constraint(equalTo: window!.contentView!.trailingAnchor, constant: -12),
-                tabs.topAnchor.constraint(equalTo: window!.contentView!.topAnchor, constant: 8),
-                tabs.bottomAnchor.constraint(equalTo: window!.contentView!.bottomAnchor, constant: -8)
-            ])
-            host = iconsTab.view!
+            panes.onSelection = { [weak self] in self?.selectPane($0) }
+            window!.toolbarStyle = .preference
+            window!.contentViewController = panes
+            if let selected = panes.tabView.selectedTabViewItem { selectPane(selected) }
         } else {
             host = window!.contentView!
         }
-        let heading = NSTextField(labelWithString: "App Icon")
-        heading.font = .systemFont(ofSize: 20, weight: .semibold)
-        let description = text("Choose an icon for each macOS icon style.")
+        let header = sectionHeader("App Icons", description: "Choose an icon for each macOS icon style.")
         let columns = NSStackView(views: MusicAppIcons.Appearance.allCases.map(makeColumn))
         columns.orientation = .horizontal
         columns.distribution = .fillEqually
@@ -117,17 +126,17 @@ final class MusicSettings: NSWindowController {
         resetButton.bezelStyle = .rounded
         resetButton.toolTip = "Restore Music’s original icon for every appearance."
 
-        let content = NSStackView(views: [heading, description, columns, help, status, resetButton])
+        let content = NSStackView(views: [header, columns, help, status, resetButton])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 8
-        content.setCustomSpacing(20, after: description)
+        content.setCustomSpacing(20, after: header)
         content.setCustomSpacing(20, after: columns)
         content.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(content)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 28),
-            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -28),
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -24),
             content.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
             content.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor, constant: -24),
             columns.widthAnchor.constraint(equalTo: content.widthAnchor),
@@ -135,9 +144,17 @@ final class MusicSettings: NSWindowController {
         ])
     }
 
+    private func selectPane(_ item: NSTabViewItem) {
+        window?.title = item.label
+        let identifier = item.identifier as? String
+        applyExtensionsButton?.keyEquivalent = identifier == "extensions" ? "\r" : ""
+        applyScriptsButton?.keyEquivalent = identifier == "scripts" ? "\r" : ""
+        let button = identifier == "extensions" ? applyExtensionsButton : identifier == "scripts" ? applyScriptsButton : nil
+        window?.defaultButtonCell = button?.cell as? NSButtonCell
+    }
+
     private func buildExtensions(in host: NSView) {
-        let description = text("Extensions installed from the App Store appear here. Enable only extensions you trust.")
-        description.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let header = sectionHeader("Installed Extensions", description: "Extensions installed from the App Store appear here. Enable only extensions you trust.")
         let rows = ExtensionList()
         rows.orientation = .vertical
         rows.alignment = .leading
@@ -146,6 +163,7 @@ final class MusicSettings: NSWindowController {
         rows.translatesAutoresizingMaskIntoConstraints = false
         extensionRows = rows
         let scroll = NSScrollView()
+        scroll.borderType = .bezelBorder
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.documentView = rows
@@ -153,30 +171,37 @@ final class MusicSettings: NSWindowController {
         status.textColor = .systemRed
         extensionStatus = status
         let refresh = NSButton(title: "Refresh List", target: self, action: #selector(refreshExtensionList))
+        refresh.bezelStyle = .rounded
         refresh.toolTip = "Check for newly installed or removed extensions."
         let getExtensions = NSButton(title: "Get Extensions…", target: self, action: #selector(browseExtensions))
+        getExtensions.bezelStyle = .rounded
         getExtensions.toolTip = "Browse Safari extensions in the App Store."
         getExtensions.setAccessibilityLabel("Get extensions, opens the App Store")
         let apply = NSButton(title: "Apply Extensions", target: self, action: #selector(applyExtensions))
+        apply.bezelStyle = .rounded
         apply.toolTip = "Reload YouTube Music to apply changes. Settings stays open."
         applyExtensionsButton = apply
         let actions = NSStackView(views: [refresh, getExtensions, NSView(), apply])
-        actions.spacing = 12
+        actions.spacing = 8
         let reloadHint = text("Apply reloads YouTube Music. Playback may pause.")
         reloadHint.textColor = .secondaryLabelColor
-        let content = NSStackView(views: [description, scroll, status, actions, reloadHint])
+        let content = NSStackView(views: [header, scroll, status, actions, reloadHint])
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 16
+        content.spacing = 12
+        content.setCustomSpacing(16, after: header)
+        content.setCustomSpacing(8, after: actions)
         content.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(content)
+        let preferredHeight = scroll.heightAnchor.constraint(equalToConstant: 220)
+        preferredHeight.priority = .defaultLow
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 28),
-            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -28),
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -24),
             content.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
             content.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor, constant: -24),
             scroll.widthAnchor.constraint(equalTo: content.widthAnchor),
-            scroll.heightAnchor.constraint(equalToConstant: 220),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140), preferredHeight,
             rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
@@ -199,6 +224,7 @@ final class MusicSettings: NSWindowController {
             button.cell?.lineBreakMode = .byTruncatingTail
             button.toolTip = entry.name
             let open = NSButton(title: "Open", target: self, action: #selector(openExtension(_:)))
+            open.bezelStyle = .rounded
             open.identifier = NSUserInterfaceItemIdentifier(entry.id)
             let row = NSStackView(views: [button, open])
             row.alignment = .centerY
@@ -264,7 +290,7 @@ final class MusicSettings: NSWindowController {
     }
 
     private func buildScripts(in host: NSView) {
-        let description = text("Import local JavaScript for YouTube Music. New scripts start off. Scripts can read and change the page, so import only scripts you trust.")
+        let header = sectionHeader("Your Scripts", description: "Customize YouTube Music with your own scripts. Only enable scripts you trust.")
         let rows = ExtensionList()
         rows.orientation = .vertical
         rows.alignment = .leading
@@ -273,32 +299,37 @@ final class MusicSettings: NSWindowController {
         rows.translatesAutoresizingMaskIntoConstraints = false
         scriptRows = rows
         let scroll = NSScrollView()
+        scroll.borderType = .bezelBorder
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.documentView = rows
         let status = text("")
         scriptStatus = status
         let importScript = NSButton(title: "Import Script…", target: self, action: #selector(importScript))
+        importScript.bezelStyle = .rounded
         importScript.toolTip = "Import a local JavaScript (.js) file. It starts off."
         importScriptButton = importScript
         let apply = NSButton(title: "Apply Scripts", target: self, action: #selector(applyScripts))
+        apply.bezelStyle = .rounded
         apply.toolTip = "Reload YouTube Music to apply changes. Settings stays open."
         applyScriptsButton = apply
         let actions = NSStackView(views: [importScript, NSView(), apply])
-        actions.spacing = 12
+        actions.spacing = 8
         let hint = text("Apply reloads YouTube Music. Playback may pause.")
         hint.textColor = .secondaryLabelColor
-        let content = NSStackView(views: [description, scroll, status, actions, hint])
+        let content = NSStackView(views: [header, scroll, status, actions, hint])
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 16
+        content.spacing = 12
+        content.setCustomSpacing(16, after: header)
+        content.setCustomSpacing(8, after: actions)
         content.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(content)
         let preferredHeight = scroll.heightAnchor.constraint(equalToConstant: 220)
         preferredHeight.priority = .defaultLow
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 28),
-            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -28),
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -24),
             content.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
             content.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor, constant: -24),
             scroll.widthAnchor.constraint(equalTo: content.widthAnchor),
@@ -325,6 +356,7 @@ final class MusicSettings: NSWindowController {
             toggle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             toggle.toolTip = entry.name
             let remove = NSButton(title: "Remove", target: self, action: #selector(removeScript(_:)))
+            remove.bezelStyle = .rounded
             remove.identifier = toggle.identifier
             remove.isEnabled = !isApplying
             remove.setAccessibilityLabel("Remove \(entry.name) from Music")
@@ -414,9 +446,21 @@ final class MusicSettings: NSWindowController {
 
     private func text(_ string: String) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: string)
-        label.font = .systemFont(ofSize: 12)
-        label.textColor = .labelColor
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
         return label
+    }
+
+    private func sectionHeader(_ title: String, description: String) -> NSStackView {
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        let detail = text(description)
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let header = NSStackView(views: [heading, detail])
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 4
+        return header
     }
 
     private func refresh() {

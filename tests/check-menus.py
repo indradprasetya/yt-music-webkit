@@ -36,11 +36,13 @@ Task { @MainActor in
     assert(settingsItem.keyEquivalent == "," && settingsItem.target === self)
     showSettings()
     let settingsWindow = settings!.window!
-    let settingsTabs = settingsWindow.contentView!.subviews.compactMap { $0 as? NSTabView }.first!
+    let settingsPaneController = settingsWindow.contentViewController as! NSTabViewController
+    let settingsTabs = settingsPaneController.tabView
     assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts"])
     for index in [0, 1, 2, 0, 2, 1, 0] {
         settingsTabs.selectTabViewItem(at: index)
         settingsWindow.contentView!.layoutSubtreeIfNeeded()
+        assert(settingsWindow.title == settingsTabs.selectedTabViewItem!.label)
         assert(settingsTabs.selectedTabViewItem?.view?.subviews.contains { $0 is NSStackView } == true)
         try! await Task.sleep(nanoseconds: 100_000_000)
     }
@@ -55,7 +57,9 @@ Task { @MainActor in
     let topPadding = clip.isFlipped ? rowRect.minY - clip.bounds.minY : clip.bounds.maxY - rowRect.maxY
     assert(abs(topPadding - 16) < 1, "Extension list starts at the top with padding")
     assert(abs(rowRect.minX - clip.bounds.minX - 16) < 1, "Extension rows have left padding")
-    let actions = extensionContent.arrangedSubviews.compactMap { $0 as? NSStackView }.first!
+    let actions = extensionContent.arrangedSubviews.compactMap { $0 as? NSStackView }.first {
+        $0.arrangedSubviews.contains { ($0 as? NSButton)?.title == "Get Extensions…" }
+    }!
     let getExtensions = actions.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "Get Extensions…" }!
     assert(getExtensions.isEnabled && getExtensions.target === settings && getExtensions.action != nil)
     let extraRows = (1...20).map { NSTextField(labelWithString: "Extension \($0)") }

@@ -29,10 +29,14 @@ let settings = MusicSettings(icons: icons, extensions: extensions, scripts: scri
 settings.show()
 let window = settings.window!
 func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-let tabs = descendants(window.contentView!).compactMap { $0 as? NSTabView }.first!
+let paneController = window.contentViewController as? NSTabViewController
+assert(paneController?.tabStyle == .toolbar, "Use macOS's native settings toolbar")
+let tabs = paneController!.tabView
+assert(window.toolbar?.allowsUserCustomization == false, "Settings navigation must remain stable")
 assert(tabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts"])
 tabs.selectTabViewItem(at: 1)
 window.contentView!.layoutSubtreeIfNeeded()
+assert(window.title == "Extensions", "The native window title identifies the active pane")
 let deadline = Date(timeIntervalSinceNow: 10)
 while extensions.isWorking && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
 assert(!extensions.isWorking)
@@ -58,8 +62,10 @@ apply.performClick(nil)
 settings.pageLoadFinished(error: NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Offline"]))
 assert(apply.isEnabled && window.isVisible, "A failed navigation must allow retry without losing Settings")
 assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Offline") })
-tabs.selectTabViewItem(at: 2)
+let scriptPane = window.toolbar!.items.first { $0.label == "Scripts" }!
+assert(NSApp.sendAction(scriptPane.action!, to: scriptPane.target, from: scriptPane))
 window.contentView!.layoutSubtreeIfNeeded()
+assert(window.title == "Scripts" && tabs.selectedTabViewItem?.identifier as? String == "scripts")
 let scriptButtons = descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSButton }
 let scriptToggle = scriptButtons.first { $0.identifier?.rawValue == scripts.entries[0].id.uuidString }!
 assert(scriptToggle.state == .off, "Imported scripts are OFF in Settings")
@@ -67,7 +73,9 @@ scriptToggle.performClick(nil)
 assert(scripts.entries[0].isEnabled)
 let applyScripts = scriptButtons.first { $0.title == "Apply Scripts" }!
 let previousReloads = reloads
-applyScripts.performClick(nil)
+let returnKey = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+    windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
+assert(window.performKeyEquivalent(with: returnKey), "Return applies the visible pane")
 assert(reloads == previousReloads + 1 && window.isVisible && !applyScripts.isEnabled)
 assert(!apply.isEnabled, "Do not apply another tab while the shared page is reloading")
 settings.pageLoadFinished()
