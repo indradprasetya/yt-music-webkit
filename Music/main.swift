@@ -495,7 +495,9 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         let appMenu = NSMenu(title: "Music")
         appMenu.addItem(withTitle: "About Music", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")
         appMenu.addItem(.separator())
         let services = NSMenu(title: "Services")
         appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = services
@@ -507,8 +509,12 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         appMenu.addItem(withTitle: "Quit Music", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let file = NSMenu(title: "File")
-        file.addItem(withTitle: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "").target = self
-        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let openInBrowser = file.addItem(withTitle: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "")
+        openInBrowser.target = self
+        openInBrowser.image = NSImage(systemSymbolName: "safari", accessibilityDescription: "Open in Browser")
+        file.addItem(.separator())
+        let closeWindow = file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        closeWindow.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Window")
 
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -520,9 +526,13 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
         let view = NSMenu(title: "View")
-        view.addItem(withTitle: "Reload", action: #selector(refresh), keyEquivalent: "r").target = self
+        let reload = view.addItem(withTitle: "Reload", action: #selector(refresh), keyEquivalent: "r")
+        reload.target = self
+        reload.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
         view.addItem(.separator())
-        view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f").keyEquivalentModifierMask = [.command, .control]
+        let fullScreen = view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreen.keyEquivalentModifierMask = [.command, .control]
+        fullScreen.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Enter Full Screen")
 
         for (title, action, key) in [("Play", "playpause", " "), ("Next Track", "nexttrack", "\u{F703}"),
                                      ("Previous Track", "previoustrack", "\u{F702}"), ("Volume Up", "volumeup", "\u{F700}"),
@@ -531,6 +541,17 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             let item = playbackMenu.addItem(withTitle: title, action: #selector(controlPlayback(_:)), keyEquivalent: key)
             item.target = self
             item.representedObject = action
+            let symbol: String
+            switch action {
+            case "playpause": symbol = "playpause.fill"
+            case "nexttrack": symbol = "forward.end.fill"
+            case "previoustrack": symbol = "backward.end.fill"
+            case "volumeup": symbol = "speaker.wave.2.fill"
+            case "volumedown": symbol = "speaker.wave.1.fill"
+            case "mute": symbol = "speaker.slash.fill"
+            default: symbol = "shuffle"
+            }
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
             if action == "playpause" { item.keyEquivalentModifierMask = [] }
         }
         for (title, action) in [("Off", "repeatoff"), ("All", "repeatall"), ("One", "repeatone")] {
@@ -538,15 +559,21 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             item.target = self
             item.representedObject = action
         }
-        playbackMenu.addItem(withTitle: "Repeat", action: nil, keyEquivalent: "").submenu = repeatMenu
+        let repeatItem = playbackMenu.addItem(withTitle: "Repeat", action: nil, keyEquivalent: "")
+        repeatItem.image = NSImage(systemSymbolName: "repeat", accessibilityDescription: "Repeat")
+        repeatItem.submenu = repeatMenu
 
         let windows = NSMenu(title: "Window")
         windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windows.addItem(.separator())
-        windows.addItem(withTitle: "Show Music", action: #selector(showMusic), keyEquivalent: "").target = self
+        let showMusicItem = windows.addItem(withTitle: "Show Music", action: #selector(showMusic), keyEquivalent: "")
+        showMusicItem.target = self
+        showMusicItem.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Show Music")
         let help = NSMenu(title: "Help")
-        help.addItem(withTitle: "Report an Issue…", action: #selector(reportIssue), keyEquivalent: "").target = self
+        let reportIssue = help.addItem(withTitle: "Report an Issue…", action: #selector(reportIssue), keyEquivalent: "")
+        reportIssue.target = self
+        reportIssue.image = NSImage(systemSymbolName: "exclamationmark.bubble", accessibilityDescription: "Report an Issue")
         help.addItem(.separator())
         for submenu in [appMenu, file, edit, view, playbackMenu, windows, help] {
             menu.addItem(withTitle: submenu.title, action: nil, keyEquivalent: "").submenu = submenu

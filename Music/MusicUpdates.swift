@@ -15,6 +15,7 @@ final class MusicUpdates: NSObject, NSMenuItemValidation, NSWindowDelegate, SPUU
         super.init()
         controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
         checkItem.toolTip = "Not checked yet"
+        checkItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Check for Updates")
         checkItem.target = self
         availabilityObservation = updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, _ in
             self?.refreshMenu()
@@ -24,7 +25,9 @@ final class MusicUpdates: NSObject, NSMenuItemValidation, NSWindowDelegate, SPUU
     func attach(to appMenu: NSMenu, helpMenu: NSMenu) {
         appMenu.insertItem(checkItem, at: 2)
         appMenu.insertItem(.separator(), at: 3)
-        helpMenu.addItem(withTitle: "What’s New…", action: #selector(showReleaseNotes), keyEquivalent: "").target = self
+        let releaseNotesItem = helpMenu.addItem(withTitle: "What’s New…", action: #selector(showReleaseNotes), keyEquivalent: "")
+        releaseNotesItem.target = self
+        releaseNotesItem.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "What’s New")
         do {
             try updater.start()
         } catch {
