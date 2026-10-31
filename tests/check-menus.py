@@ -55,7 +55,7 @@ Task { @MainActor in
     let topPadding = clip.isFlipped ? rowRect.minY - clip.bounds.minY : clip.bounds.maxY - rowRect.maxY
     assert(abs(topPadding - 16) < 1, "Extension list starts at the top with padding")
     assert(abs(rowRect.minX - clip.bounds.minX - 16) < 1, "Extension rows have left padding")
-    let actions = extensionContent.arrangedSubviews.last as! NSStackView
+    let actions = extensionContent.arrangedSubviews.compactMap { $0 as? NSStackView }.first!
     let getExtensions = actions.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "Get Extensions…" }!
     assert(getExtensions.isEnabled && getExtensions.target === settings && getExtensions.action != nil)
     let extraRows = (1...20).map { NSTextField(labelWithString: "Extension \($0)") }

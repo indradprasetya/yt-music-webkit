@@ -374,11 +374,16 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     @objc func refresh() {
-        webView.reload()
+        if webView.reload() == nil {
+            settings?.pageLoadFinished(error: NSError(domain: "Music", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No page is open. Try again after YouTube Music loads."]))
+        }
     }
 
     @objc private func showSettings() {
-        if settings == nil { settings = MusicSettings(icons: appIcons, extensions: extensions) }
+        if settings == nil {
+            settings = MusicSettings(icons: appIcons, extensions: extensions, reloadPage: { [weak self] in self?.refresh() })
+        }
         settings?.show()
     }
 
@@ -450,15 +455,25 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         // Sign-in and other external pages retain the normal native content area.
         (window.contentView as? TitlebarBackgroundView)?.extendsUnderTitlebar = musicURL != nil
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { resetPlayback() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        resetPlayback()
+        settings?.pageLoadFinished(error: NSError(domain: "Music", code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "The page stopped responding. Try Apply again."]))
+    }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         extensions.pageChanged()
+        settings?.pageLoadFinished()
         if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        settings?.pageLoadFinished(error: error)
         if musicURL != nil { webView.evaluateJavaScript("window.musicPlayback?.update(true)") }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        settings?.pageLoadFinished(error: error)
     }
 
     private func makeMenu() {

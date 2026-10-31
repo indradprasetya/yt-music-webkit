@@ -10,14 +10,20 @@ final class MusicSettings: NSWindowController {
     private let extensions: MusicExtensions?
     private var extensionRows: NSStackView?
     private var extensionStatus: NSTextField?
+    private var applyExtensionsButton: NSButton?
+    private let reloadPage: (() -> Void)?
+    private var applyingExtensions = false
+    private var extensionFeedback: String?
+    private var extensionFeedbackIsError = false
     private var previews: [MusicAppIcons.Appearance: NSImageView] = [:]
     private var labels: [MusicAppIcons.Appearance: NSTextField] = [:]
     private var resetButton: NSButton!
     private var status: NSTextField!
 
-    init(icons: MusicAppIcons, extensions: MusicExtensions? = nil) {
+    init(icons: MusicAppIcons, extensions: MusicExtensions? = nil, reloadPage: (() -> Void)? = nil) {
         self.icons = icons
         self.extensions = extensions
+        self.reloadPage = reloadPage
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 430),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
@@ -124,13 +130,19 @@ final class MusicSettings: NSWindowController {
         let status = text("")
         status.textColor = .systemRed
         extensionStatus = status
-        let refresh = NSButton(title: "Refresh", target: self, action: #selector(refreshExtensionList))
+        let refresh = NSButton(title: "Refresh List", target: self, action: #selector(refreshExtensionList))
+        refresh.toolTip = "Check for newly installed or removed extensions."
         let getExtensions = NSButton(title: "Get Extensions…", target: self, action: #selector(browseExtensions))
         getExtensions.toolTip = "Browse Safari extensions in the App Store."
         getExtensions.setAccessibilityLabel("Get extensions, opens the App Store")
-        let actions = NSStackView(views: [refresh, getExtensions])
+        let apply = NSButton(title: "Apply Extensions", target: self, action: #selector(applyExtensions))
+        apply.toolTip = "Reload YouTube Music to apply changes. Settings stays open."
+        applyExtensionsButton = apply
+        let actions = NSStackView(views: [refresh, getExtensions, NSView(), apply])
         actions.spacing = 12
-        let content = NSStackView(views: [description, scroll, status, actions])
+        let reloadHint = text("Apply reloads YouTube Music. Playback may pause.")
+        reloadHint.textColor = .secondaryLabelColor
+        let content = NSStackView(views: [description, scroll, status, actions, reloadHint])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 16
@@ -146,6 +158,7 @@ final class MusicSettings: NSWindowController {
             rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            actions.widthAnchor.constraint(equalTo: content.widthAnchor),
             status.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
         refreshExtensions()
@@ -159,7 +172,10 @@ final class MusicSettings: NSWindowController {
             let button = NSButton(checkboxWithTitle: entry.name, target: self, action: #selector(toggleExtension(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(entry.id)
             button.state = extensions.isEnabled(entry) ? .on : .off
-            button.isEnabled = !extensions.isBusy(entry)
+            button.isEnabled = !extensions.isBusy(entry) && !applyingExtensions
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            button.cell?.lineBreakMode = .byTruncatingTail
+            button.toolTip = entry.name
             let open = NSButton(title: "Open", target: self, action: #selector(openExtension(_:)))
             open.identifier = NSUserInterfaceItemIdentifier(entry.id)
             let row = NSStackView(views: [button, open])
@@ -167,12 +183,42 @@ final class MusicSettings: NSWindowController {
             row.detachesHiddenViews = false
             open.isHidden = !extensions.hasAction(entry)
             rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor, constant: -32).isActive = true
+            if extensions.usesNativeMessaging(entry) {
+                let note = text("Native app features aren’t available in Music.")
+                note.textColor = .secondaryLabelColor
+                rows.addArrangedSubview(note)
+                note.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
+            }
         }
-        extensionStatus?.stringValue = extensions.errorMessage ?? ""
-        extensionStatus?.isHidden = extensions.errorMessage == nil
+        extensionStatus?.stringValue = extensions.errorMessage ?? extensionFeedback ?? ""
+        extensionStatus?.textColor = extensions.errorMessage != nil || extensionFeedbackIsError ? .systemRed : .secondaryLabelColor
+        extensionStatus?.isHidden = extensionStatus?.stringValue.isEmpty == true
+        applyExtensionsButton?.isEnabled = reloadPage != nil && !applyingExtensions && !extensions.isWorking && extensions.errorMessage == nil
     }
 
-    @objc private func refreshExtensionList() { extensions?.scan() }
+    @objc private func refreshExtensionList() {
+        extensionFeedback = nil
+        extensions?.scan()
+    }
+
+    @objc private func applyExtensions() {
+        guard let extensions, !extensions.isWorking, extensions.errorMessage == nil,
+              !applyingExtensions, let reloadPage else { return }
+        applyingExtensions = true
+        extensionFeedback = "Reloading YouTube Music…"
+        extensionFeedbackIsError = false
+        refreshExtensions()
+        reloadPage()
+    }
+
+    func pageLoadFinished(error: Error? = nil) {
+        guard applyingExtensions else { return }
+        applyingExtensions = false
+        extensionFeedback = error.map { "Couldn’t reload YouTube Music: \($0.localizedDescription)" } ?? "Changes applied."
+        extensionFeedbackIsError = error != nil
+        refreshExtensions()
+    }
 
     @objc private func browseExtensions() {
         if !NSWorkspace.shared.open(URL(string: "macappstore://apps.apple.com/story/id1377753262?platform=mac")!) {
@@ -183,6 +229,7 @@ final class MusicSettings: NSWindowController {
     @objc private func toggleExtension(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue,
               let entry = extensions?.entries.first(where: { $0.id == id }) else { return }
+        extensionFeedback = nil
         extensions?.setEnabled(sender.state == .on, for: entry)
     }
 

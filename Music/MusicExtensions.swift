@@ -22,6 +22,7 @@ final class MusicExtensions: NSObject, WKWebExtensionControllerDelegate, WKWebEx
     private(set) var entries: [Entry] = []
     var onChange: (() -> Void)?
     var errorMessage: String?
+    var isWorking: Bool { isScanning || !pending.isEmpty }
 
     override init() {
         super.init()
@@ -42,6 +43,9 @@ final class MusicExtensions: NSObject, WKWebExtensionControllerDelegate, WKWebEx
     func isEnabled(_ entry: Entry) -> Bool { contexts[entry.id] != nil }
     func isBusy(_ entry: Entry) -> Bool { pending.contains(entry.id) }
     func hasAction(_ entry: Entry) -> Bool { contexts[entry.id]?.action(for: self) != nil }
+    func usesNativeMessaging(_ entry: Entry) -> Bool {
+        contexts[entry.id]?.webExtension.requestedPermissions.contains(.nativeMessaging) == true
+    }
 
     func performAction(for entry: Entry, from view: NSView) {
         guard let context = contexts[entry.id] else { return }
@@ -52,11 +56,12 @@ final class MusicExtensions: NSObject, WKWebExtensionControllerDelegate, WKWebEx
     func scan() {
         guard !isScanning else { return }
         isScanning = true
+        onChange?()
         Task {
-            defer { isScanning = false }
+            defer { isScanning = false; onChange?() }
             let found = await Task.detached { Self.discover() }.value
             guard let found else {
-                errorMessage = "Couldn’t find installed extensions. Try Refresh."
+                errorMessage = "Couldn’t find installed extensions. Try Refresh List."
                 onChange?()
                 return
             }
@@ -87,6 +92,7 @@ final class MusicExtensions: NSObject, WKWebExtensionControllerDelegate, WKWebEx
 
     func setEnabled(_ enabled: Bool, for entry: Entry) {
         guard !pending.contains(entry.id) else { return }
+        errorMessage = nil
         if !enabled {
             if let context = contexts[entry.id] {
                 do {
@@ -188,6 +194,20 @@ final class MusicExtensions: NSObject, WKWebExtensionControllerDelegate, WKWebEx
     func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] { [self] }
     func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? { self }
     func webView(for context: WKWebExtensionContext) -> WKWebView? { webView }
+
+    func webExtensionController(_ controller: WKWebExtensionController, sendMessage message: Any, toApplicationWithIdentifier applicationIdentifier: String?, for context: WKWebExtensionContext, replyHandler: @escaping (Any?, Error?) -> Void) {
+        replyHandler(nil, nativeMessagingError())
+    }
+
+    func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        completionHandler(nativeMessagingError())
+    }
+
+    private func nativeMessagingError() -> NSError {
+        // Safari's native extension host requires a private Apple entitlement.
+        NSError(domain: "MusicExtensions", code: 3, userInfo: [NSLocalizedDescriptionKey:
+            "Native app features aren’t available in Music. Use this extension in Safari."])
+    }
 
     func webExtensionController(_ controller: WKWebExtensionController, presentActionPopup action: WKWebExtension.Action, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
         guard let anchor = popupAnchor ?? webView, let popover = action.popupPopover else {
