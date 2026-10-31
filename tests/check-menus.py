@@ -34,12 +34,16 @@ Task { @MainActor in
     assert(appMenu.items[2].title == "Check for Updates…")
     let settingsItem = appMenu.items.first { $0.title == "Settings…" }!
     assert(settingsItem.keyEquivalent == "," && settingsItem.target === self)
+    assert(settingsItem.image != nil, "Settings must have its gear symbol")
+    if #available(macOS 27.0, *) {
+        assert(settingsItem.preferredImageVisibility == .visible, "Always show the Settings icon on macOS 27")
+    }
     showSettings()
     let settingsWindow = settings!.window!
     let settingsPaneController = settingsWindow.contentViewController as! NSTabViewController
     let settingsTabs = settingsPaneController.tabView
-    assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts"])
-    for index in [0, 1, 2, 0, 2, 1, 0] {
+    assert(settingsTabs.tabViewItems.map(\.label) == ["App Icon", "Extensions", "Scripts", "Lyrics"])
+    for index in [0, 1, 2, 3, 0, 2, 1, 3, 0] {
         settingsTabs.selectTabViewItem(at: index)
         settingsWindow.contentView!.layoutSubtreeIfNeeded()
         assert(settingsWindow.title == settingsTabs.selectedTabViewItem!.label)
@@ -193,13 +197,17 @@ Task { @MainActor in
     _ = await js("document.getElementById('editor').focus()")
     await waitFor { menu.editing }
     assert(!menu.performKeyEquivalent(with: key(" ")), "Protect contenteditable too")
+    _ = await js("const lyric = document.createElement('button'); lyric.textContent = 'Seek to lyric'; document.body.append(lyric); lyric.focus(); null")
+    await waitFor { menu.editing }
+    assert(!menu.performKeyEquivalent(with: key(" ")), "Space must activate a focused lyric button rather than toggle playback")
     _ = await js("document.activeElement.blur()")
     await waitFor { !menu.editing }
     await waitFor { NSApp.keyWindow === window }
     assert(menu.performKeyEquivalent(with: key(" ")), "Space controls playback outside text fields")
     await waitFor { self.playbackState["paused"] == true }
 
-    assert(NSApp.sendAction(file.items[1].action!, to: nil, from: file.items[1]))
+    let close = file.items.first { $0.action == #selector(NSWindow.performClose(_:)) }!
+    assert(NSApp.sendAction(close.action!, to: nil, from: close))
     assert(!window.isVisible && playbackState["playpause"] == true, "Closing Music must preserve its player")
     let show = windows.items.first { $0.title == "Show Music" }!
     assert(NSApp.sendAction(show.action!, to: show.target, from: show))
@@ -212,7 +220,7 @@ Task { @MainActor in
     await waitFor { NSApp.keyWindow === panel }
     let panelKey = key(" ")
     assert(!menu.performKeyEquivalent(with: panelKey), "Do not take playback shortcuts from another window")
-    assert(NSApp.sendAction(file.items[1].action!, to: nil, from: file.items[1]))
+    assert(NSApp.sendAction(close.action!, to: nil, from: close))
     assert(!panel.isVisible && window.isVisible, "Close acts on the active panel")
     showMusic()
     let fullScreen = view.items.last!
@@ -291,6 +299,8 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     str(root / 'Music/MusicAppIcons.swift'), str(root / 'Music/MusicSettings.swift'),
                     str(root / 'Music/MusicExtensions.swift'),
                     str(root / 'Music/MusicScripts.swift'),
+                    str(root / 'Music/MusicLyrics.swift'), str(root / 'Music/MusicLyricsProvider.swift'),
+                    str(root / 'Music/MusicMenuSymbol.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))
     with subprocess.Popen([str(binary)]) as process:

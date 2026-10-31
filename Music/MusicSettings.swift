@@ -18,6 +18,7 @@ final class MusicSettings: NSWindowController {
     private let icons: MusicAppIcons
     private let extensions: MusicExtensions?
     private let scripts: MusicScripts?
+    private let lyrics: MusicLyrics?
     private var extensionRows: NSStackView?
     private var extensionStatus: NSTextField?
     private var applyExtensionsButton: NSButton?
@@ -30,16 +31,25 @@ final class MusicSettings: NSWindowController {
     private var importScriptButton: NSButton?
     private var applyScriptsButton: NSButton?
     private var scriptError: String?
+    private var lyricsToggle: NSButton?
+    private var lyricsStatus: NSTextField?
+    private let updateLyrics: ((@escaping (Error?) -> Void) -> Void)?
+    private var isUpdatingLyrics = false
+    private var lyricsError: String?
     private var previews: [MusicAppIcons.Appearance: NSImageView] = [:]
     private var labels: [MusicAppIcons.Appearance: NSTextField] = [:]
     private var resetButton: NSButton!
     private var status: NSTextField!
 
-    init(icons: MusicAppIcons, extensions: MusicExtensions? = nil, scripts: MusicScripts? = nil, reloadPage: (() -> Void)? = nil) {
+    init(icons: MusicAppIcons, extensions: MusicExtensions? = nil, scripts: MusicScripts? = nil,
+         lyrics: MusicLyrics? = nil, reloadPage: (() -> Void)? = nil,
+         updateLyrics: ((@escaping (Error?) -> Void) -> Void)? = nil) {
         self.icons = icons
         self.extensions = extensions
         self.scripts = scripts
+        self.lyrics = lyrics
         self.reloadPage = reloadPage
+        self.updateLyrics = updateLyrics
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
@@ -47,7 +57,7 @@ final class MusicSettings: NSWindowController {
         super.init(window: window)
         buildContent()
         icons.onChange = { [weak self] in self?.refresh() }
-        extensions?.onChange = { [weak self] in self?.refreshExtensions(); self?.refreshScripts() }
+        extensions?.onChange = { [weak self] in self?.refreshExtensions(); self?.refreshScripts(); self?.refreshLyrics() }
         scripts?.onChange = { [weak self] in
             self?.scriptError = nil
             self?.applyFeedback = nil
@@ -72,7 +82,7 @@ final class MusicSettings: NSWindowController {
 
     private func buildContent() {
         let host: NSView
-        if extensions != nil || scripts != nil {
+        if extensions != nil || scripts != nil || lyrics != nil {
             let panes = Panes()
             panes.tabStyle = .toolbar
             panes.transitionOptions = []
@@ -96,6 +106,9 @@ final class MusicSettings: NSWindowController {
             }
             if scripts != nil {
                 buildScripts(in: addPane("scripts", title: "Scripts", symbol: "applescript"))
+            }
+            if lyrics != nil {
+                buildLyrics(in: addPane("lyrics", title: "Lyrics", symbol: "text.quote"))
             }
             panes.onSelection = { [weak self] in self?.selectPane($0) }
             window!.toolbarStyle = .preference
@@ -149,7 +162,8 @@ final class MusicSettings: NSWindowController {
         let identifier = item.identifier as? String
         applyExtensionsButton?.keyEquivalent = identifier == "extensions" ? "\r" : ""
         applyScriptsButton?.keyEquivalent = identifier == "scripts" ? "\r" : ""
-        let button = identifier == "extensions" ? applyExtensionsButton : identifier == "scripts" ? applyScriptsButton : nil
+        let button = identifier == "extensions" ? applyExtensionsButton
+            : identifier == "scripts" ? applyScriptsButton : nil
         window?.defaultButtonCell = button?.cell as? NSButtonCell
     }
 
@@ -264,6 +278,7 @@ final class MusicSettings: NSWindowController {
         applyFeedbackIsError = false
         refreshExtensions()
         refreshScripts()
+        refreshLyrics()
         reloadPage()
     }
 
@@ -274,6 +289,7 @@ final class MusicSettings: NSWindowController {
         applyFeedbackIsError = error != nil
         refreshExtensions()
         refreshScripts()
+        refreshLyrics()
     }
 
     @objc private func browseExtensions() {
@@ -341,6 +357,95 @@ final class MusicSettings: NSWindowController {
             status.widthAnchor.constraint(equalTo: content.widthAnchor)
         ])
         refreshScripts()
+    }
+
+    private func buildLyrics(in host: NSView) {
+        let header = sectionHeader("Synced Lyrics (Beta)", description: "Follow lyrics in time with your music.")
+        let toggle = NSButton(checkboxWithTitle: "Enable synced lyrics", target: self, action: #selector(toggleLyrics(_:)))
+        toggle.state = lyrics?.isEnabled == true ? .on : .off
+        lyricsToggle = toggle
+
+        let status = text("")
+        lyricsStatus = status
+        toggle.toolTip = "Turn synced lyrics on or off immediately, without reloading YouTube Music."
+        let hint = text("Changes take effect immediately. Playback keeps going.")
+        func groupTitle(_ title: String) -> NSTextField {
+            let label = NSTextField(labelWithString: title)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            return label
+        }
+        func bullets(_ items: [String]) -> NSTextField {
+            let label = text(items.map { "•\t\($0)" }.joined(separator: "\n"))
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.headIndent = 12
+            paragraph.tabStops = [NSTextTab(textAlignment: .left, location: 12)]
+            paragraph.paragraphSpacing = 4
+            label.attributedStringValue = NSAttributedString(string: label.stringValue, attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: paragraph
+            ])
+            return label
+        }
+        let usageTitle = groupTitle("Using lyrics")
+        let usage = bullets([
+            "Click a timed line to jump to that part of the song.",
+            "Use the gear button in Lyrics to adjust timing for the current song.",
+            "When synced lyrics aren’t available, plain lyrics are shown."
+        ])
+        let privacyTitle = groupTitle("Privacy & storage")
+        let privacy = bullets([
+            "When enabled, song titles and artists are sent to NetEase Cloud Music, with LRCLIB as a fallback.",
+            "Providers receive your IP address. Your YouTube account cookies aren’t shared.",
+            "Lyrics stay in memory and aren’t saved to disk.",
+            "Only nonzero offsets and song IDs are saved locally. Reset to 0 to remove a saved offset."
+        ])
+
+        let content = NSStackView(views: [header, toggle, hint, usageTitle, usage, privacyTitle, privacy, status])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 8
+        content.setCustomSpacing(16, after: header)
+        content.setCustomSpacing(20, after: hint)
+        content.setCustomSpacing(4, after: usageTitle)
+        content.setCustomSpacing(20, after: usage)
+        content.setCustomSpacing(4, after: privacyTitle)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 24),
+            content.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -24),
+            content.topAnchor.constraint(equalTo: host.topAnchor, constant: 24),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor, constant: -24),
+            privacy.widthAnchor.constraint(equalTo: content.widthAnchor),
+            status.widthAnchor.constraint(equalTo: content.widthAnchor),
+            header.widthAnchor.constraint(equalTo: content.widthAnchor),
+            usage.widthAnchor.constraint(equalTo: content.widthAnchor),
+            hint.widthAnchor.constraint(equalTo: content.widthAnchor)
+        ])
+        refreshLyrics()
+    }
+
+    private func refreshLyrics() {
+        guard let lyrics else { return }
+        lyricsToggle?.state = lyrics.isEnabled ? .on : .off
+        lyricsToggle?.isEnabled = updateLyrics != nil && !isApplying && !isUpdatingLyrics
+        lyricsStatus?.stringValue = lyricsError ?? (isUpdatingLyrics ? "Updating lyrics…" : "")
+        lyricsStatus?.textColor = lyricsError != nil ? .systemRed : .secondaryLabelColor
+        lyricsStatus?.isHidden = lyricsStatus?.stringValue.isEmpty == true
+    }
+
+    @objc private func toggleLyrics(_ sender: NSButton) {
+        guard !isApplying, !isUpdatingLyrics, let updateLyrics else { return }
+        lyrics?.isEnabled = sender.state == .on
+        lyricsError = nil
+        isUpdatingLyrics = true
+        refreshLyrics()
+        updateLyrics { [weak self] error in
+            self?.isUpdatingLyrics = false
+            self?.lyricsError = error.map { "Couldn’t update lyrics: \($0.localizedDescription) Use View → Reload to retry." }
+            self?.refreshLyrics()
+        }
     }
 
     private func refreshScripts() {

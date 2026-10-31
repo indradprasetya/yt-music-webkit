@@ -93,6 +93,49 @@ assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextFi
 settings.pageLoadFinished()
 assert(descendants(tabs.selectedTabViewItem!.view!).compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Changes applied." })
 
+let lyrics = MusicLyrics()
+let savedLyrics = UserDefaults.standard.object(forKey: "MusicCustomLyricsEnabled")
+defer {
+    if let savedLyrics { UserDefaults.standard.set(savedLyrics, forKey: "MusicCustomLyricsEnabled") }
+    else { UserDefaults.standard.removeObject(forKey: "MusicCustomLyricsEnabled") }
+}
+lyrics.isEnabled = false
+var lyricUpdates = 0
+var lyricCompletion: ((Error?) -> Void)?
+let lyricsSettings = MusicSettings(icons: icons, lyrics: lyrics, reloadPage: { reloads += 1 }, updateLyrics: { completion in
+    lyricUpdates += 1
+    lyricCompletion = completion
+})
+lyricsSettings.show()
+let lyricsWindow = lyricsSettings.window!
+let lyricsTabs = (lyricsWindow.contentViewController as! NSTabViewController).tabView
+lyricsTabs.selectTabViewItem(at: 1)
+lyricsWindow.contentView!.layoutSubtreeIfNeeded()
+let lyricViews = descendants(lyricsTabs.selectedTabViewItem!.view!)
+let lyricToggle = lyricViews.compactMap { $0 as? NSButton }.first { $0.action == NSSelectorFromString("toggleLyrics:") }!
+assert(lyricToggle.state == .off && lyricToggle.isEnabled)
+assert(!lyricViews.compactMap { $0 as? NSButton }.contains { $0.title.contains("Apply") })
+assert(lyricsWindow.defaultButtonCell == nil, "Lyrics must not offer a second apply step")
+let beforeLyrics = reloads
+lyricToggle.performClick(nil)
+assert(lyrics.isEnabled && lyricUpdates == 1 && reloads == beforeLyrics, "Toggling lyrics applies immediately without reloading")
+assert(!lyricToggle.isEnabled, "Prevent overlapping updates")
+lyricCompletion?(nil)
+assert(lyricToggle.isEnabled)
+lyricToggle.performClick(nil)
+lyricCompletion?(NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Offline"]))
+assert(lyricToggle.isEnabled && lyricViews.compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("Offline") },
+       "A failed update must explain recovery and allow another toggle")
+lyricToggle.performClick(nil)
+lyricCompletion?(nil)
+assert(reloads == beforeLyrics && lyrics.isEnabled && lyricsWindow.isVisible)
+for view in (lyricsTabs.selectedTabViewItem!.view!.subviews.first as! NSStackView).arrangedSubviews where !view.isHidden {
+    let host = lyricsTabs.selectedTabViewItem!.view!
+    assert(host.bounds.contains(host.convert(view.bounds, from: view)), "Lyrics settings must fit the pane")
+}
+lyricsWindow.close()
+print("PASS: lyrics toggle applies immediately, never reloads, prevents duplicate updates, and reports errors")
+
 let resources = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("native-extension")
 try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
 try Data(#"{"manifest_version":3,"name":"Native Example","version":"1.0","permissions":["nativeMessaging"]}"#.utf8).write(to: resources.appendingPathComponent("manifest.json"))
@@ -111,7 +154,7 @@ RunLoop.main.run()
 ''')
     binary = work / "check-settings"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5",
-                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicScripts", "MusicSettings")],
+                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicScripts", "MusicLyrics", "MusicLyricsProvider", "MusicSettings")],
                     str(source), "-o", str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
     subprocess.run([str(binary), str(work)], check=True, timeout=20)

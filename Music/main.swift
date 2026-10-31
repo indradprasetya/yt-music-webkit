@@ -9,6 +9,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     private let appIcons = MusicAppIcons()
     private let extensions = MusicExtensions()
     private let scripts = MusicScripts()
+    private let lyrics = MusicLyrics()
     private var settings: MusicSettings?
     private var settingsReload: WKNavigation?
     private var backgroundObservation: NSKeyValueObservation?
@@ -33,6 +34,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         configuration.websiteDataStore = .default()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.userContentController.add(self, name: "playbackState")
+        lyrics.connect(to: configuration.userContentController)
         // Never advertise interval skipping: Now Playing can cache those initial controls.
         configuration.userContentController.addUserScript(WKUserScript(source: """
         if (location.protocol === 'https:' && location.hostname === 'music.youtube.com' && navigator.mediaSession) {
@@ -88,7 +90,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
                     repeatoffSelected: queue?.repeatMode === 'NONE',
                     repeatallSelected: queue?.repeatMode === 'ALL',
                     repeatoneSelected: queue?.repeatMode === 'ONE',
-                    editing: !!focused && (focused.isContentEditable || focused.matches('input, textarea, select, iframe, [role="textbox"]'))
+                    editing: !!focused && (focused.isContentEditable || focused.matches('input, textarea, select, iframe, button, [role="button"], [role="textbox"]'))
                 };
                 const serialized = JSON.stringify(state);
                 if (!force && serialized === lastState) return;
@@ -317,6 +319,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         }
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         scripts.apply(to: configuration.userContentController)
+        lyrics.apply(to: configuration.userContentController)
         webView = WKWebView(frame: .zero, configuration: configuration)
         extensions.attach(webView: webView, window: window)
         webView.uiDelegate = self
@@ -377,7 +380,9 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     @objc func refresh() {
-        scripts.apply(to: webView.configuration.userContentController)
+        let controller = webView.configuration.userContentController
+        scripts.apply(to: controller)
+        lyrics.apply(to: controller)
         settingsReload = webView.reload()
         if settingsReload == nil {
             settings?.pageLoadFinished(error: NSError(domain: "Music", code: 1,
@@ -394,7 +399,12 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     @objc private func showSettings() {
         if settings == nil {
             settings = MusicSettings(icons: appIcons, extensions: extensions, scripts: scripts,
-                reloadPage: { [weak self] in self?.refresh() })
+                lyrics: lyrics,
+                reloadPage: { [weak self] in self?.refresh() },
+                updateLyrics: { [weak self] completion in
+                    guard let self else { return }
+                    self.lyrics.update(in: self.webView, completion: completion)
+                })
         }
         settings?.show()
     }
@@ -458,6 +468,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        lyrics.cancelLookup()
         resetPlayback()
         extensions.pageChanged()
     }
@@ -468,6 +479,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         (window.contentView as? TitlebarBackgroundView)?.extendsUnderTitlebar = musicURL != nil
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        lyrics.cancelLookup()
         resetPlayback()
         settingsReload = nil
         settings?.pageLoadFinished(error: NSError(domain: "Music", code: 2,
@@ -497,7 +509,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         appMenu.addItem(.separator())
         let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
-        settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Settings")
+        MusicMenuSymbol.set("gear", on: settingsItem, description: "Settings")
         appMenu.addItem(.separator())
         let services = NSMenu(title: "Services")
         appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "").submenu = services
@@ -511,10 +523,10 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         let file = NSMenu(title: "File")
         let openInBrowser = file.addItem(withTitle: "Open in Browser", action: #selector(openInBrowser), keyEquivalent: "")
         openInBrowser.target = self
-        openInBrowser.image = NSImage(systemSymbolName: "safari", accessibilityDescription: "Open in Browser")
+        MusicMenuSymbol.set("safari", on: openInBrowser, description: "Open in Browser")
         file.addItem(.separator())
         let closeWindow = file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        closeWindow.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Window")
+        MusicMenuSymbol.set("xmark", on: closeWindow, description: "Close Window")
 
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -528,11 +540,11 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         let view = NSMenu(title: "View")
         let reload = view.addItem(withTitle: "Reload", action: #selector(refresh), keyEquivalent: "r")
         reload.target = self
-        reload.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
+        MusicMenuSymbol.set("arrow.clockwise", on: reload, description: "Reload")
         view.addItem(.separator())
         let fullScreen = view.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         fullScreen.keyEquivalentModifierMask = [.command, .control]
-        fullScreen.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Enter Full Screen")
+        MusicMenuSymbol.set("arrow.up.left.and.arrow.down.right", on: fullScreen, description: "Enter Full Screen")
 
         for (title, action, key) in [("Play", "playpause", " "), ("Next Track", "nexttrack", "\u{F703}"),
                                      ("Previous Track", "previoustrack", "\u{F702}"), ("Volume Up", "volumeup", "\u{F700}"),
@@ -551,7 +563,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             case "mute": symbol = "speaker.slash.fill"
             default: symbol = "shuffle"
             }
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            MusicMenuSymbol.set(symbol, on: item, description: title)
             if action == "playpause" { item.keyEquivalentModifierMask = [] }
         }
         for (title, action) in [("Off", "repeatoff"), ("All", "repeatall"), ("One", "repeatone")] {
@@ -560,7 +572,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
             item.representedObject = action
         }
         let repeatItem = playbackMenu.addItem(withTitle: "Repeat", action: nil, keyEquivalent: "")
-        repeatItem.image = NSImage(systemSymbolName: "repeat", accessibilityDescription: "Repeat")
+        MusicMenuSymbol.set("repeat", on: repeatItem, description: "Repeat")
         repeatItem.submenu = repeatMenu
 
         let windows = NSMenu(title: "Window")
@@ -569,11 +581,11 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         windows.addItem(.separator())
         let showMusicItem = windows.addItem(withTitle: "Show Music", action: #selector(showMusic), keyEquivalent: "")
         showMusicItem.target = self
-        showMusicItem.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Show Music")
+        MusicMenuSymbol.set("music.note", on: showMusicItem, description: "Show Music")
         let help = NSMenu(title: "Help")
         let reportIssue = help.addItem(withTitle: "Report an Issue…", action: #selector(reportIssue), keyEquivalent: "")
         reportIssue.target = self
-        reportIssue.image = NSImage(systemSymbolName: "exclamationmark.bubble", accessibilityDescription: "Report an Issue")
+        MusicMenuSymbol.set("exclamationmark.bubble", on: reportIssue, description: "Report an Issue")
         help.addItem(.separator())
         for submenu in [appMenu, file, edit, view, playbackMenu, windows, help] {
             menu.addItem(withTitle: submenu.title, action: nil, keyEquivalent: "").submenu = submenu
