@@ -1059,7 +1059,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const normalizeName = value => value.normalize('NFKC').toLowerCase().replace(/\\s+/g, ' ').trim();
                 const performerNames = new Set(artists.map(normalizeName));
                 return {instrumental: record.instrumental === true,
-                    lines: lines.map(line => {
+                    lines: lines.filter(line => typeof line.text === 'string'
+                        && /[^\\s\\p{Default_Ignorable_Code_Point}]/u.test(line.text)).map(line => {
                         const text = line.text.normalize('NFKC');
                         const performer = text.match(/^\\(([^()]+)\\)$/u)?.[1];
                         // Match declared artists only; parenthesized words may be sung vocals.

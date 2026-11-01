@@ -29,7 +29,7 @@ let package = Package(
 ''')
     variants = [sys.argv[1:]] if len(sys.argv) > 1 else [
         ["--providers-only"], ["--metadata-only"], ["--amll-only"], ["--five-sources-only"],
-        ["--five-ui-only"], ["--provider-choice-only"], ["--align-ui-only"],
+        ["--five-ui-only"], ["--provider-choice-only"], ["--align-ui-only"], ["--blank-lines-only"],
         ["--source-offsets-only"], ["--mode-offsets-only"], ["--plain-ui-only"], ["--feedback-ui-only"],
         [], ["--english"], ["--media-session"]]
     for arguments in variants:

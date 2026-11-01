@@ -121,7 +121,30 @@ final class LyricsTransport: URLProtocol {
                 }
             }
         } else if url.host == "lrclib.net" {
-            if title == "AMLL standalone" || title == "AMLL partial" { body = [] }
+            if title == "Blank lyric lines" || title == "Only blank lyrics" {
+                let vocals = title == "Blank lyric lines" ? """
+                      - text: First visible line
+                        start_ms: 1000
+                      - text: 'Second 👩‍🎤 line'
+                        start_ms: 10000
+                    """ : ""
+                body = [["trackName": title, "artistName": "Artist", "duration": 180,
+                         "syncedLyrics": "", "plainLyrics": "", "lyricsfile": """
+                    version: '1.0'
+                    metadata:
+                      title: \(title)
+                      artist: Artist
+                      duration_ms: 180000
+                    lines:
+                      - text: ''
+                        start_ms: 0
+                      - text: '   '
+                        start_ms: 5000
+                      - text: '\u{00A0}\u{200B}\u{200D}'
+                        start_ms: 6000
+                    \(vocals)
+                    """, "instrumental": false]]
+            } else if title == "AMLL standalone" || title == "AMLL partial" { body = [] }
             else if title == "Cross source" {
                 body = [["trackName": title, "artistName": "Artist", "duration": 180,
                          "syncedLyrics": "[00:01.00]First line\n[00:10.00]Second line",
@@ -153,8 +176,8 @@ final class LyricsTransport: URLProtocol {
             }
         } else if title == "AMLL standalone" {
             body = ["code": -462]
-        } else if title == "Fallback" || (title == "No match" && !recovered) {
-            if title == "Fallback" { body = ["code": -462] }
+        } else if ["Fallback", "Blank lyric lines", "Only blank lyrics"].contains(title) || (title == "No match" && !recovered) {
+            if title != "No match" { body = ["code": -462] }
             else { body = ["code": 200, "result": ["songs": [] as [Any]]] }
         } else if title == "Word timing" && url.path == "/api/search/pc" {
             body = ["code": -462]
@@ -529,6 +552,25 @@ setbuf(stdout, nil)
         let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
         try bitmap.representation(using: .png, properties: [:])!
             .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+    }
+    if CommandLine.arguments.contains("--blank-lines-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before checking blank cues")
+        try await selectVersion("blankLines01")
+        try await changeTrack("Blank lyric lines")
+        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-source').textContent === 'LRCLIB'", "Load LRCLIB Lyricsfile with blank timing cues")
+        try await expect("document.querySelectorAll('.lyrics-line').length === 2 && document.querySelectorAll('.lyrics-align').length === 2", "Empty, whitespace-only and invisible-only cues must not create lyric rows or sync buttons")
+        try await expect("document.querySelectorAll('.lyrics-seek')[1].textContent === 'Second 👩‍🎤 line'", "Preserve joiners inside visible lyric text")
+        _ = try await js("fixtureTime = 12; window.lastSeek = null; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second 👩‍🎤 line'", "Filtered rows must keep highlighting the correct timestamp")
+        _ = try await js("document.querySelector('.lyrics-align').click(); null")
+        try await expectSavedOffset(11000, for: "video:blankLines01", source: "LRCLIB")
+        try await expect("lastSeek === null", "Sync a visible line without seeking")
+        _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
+        try await expect("lastSeek === 21", "Removing blank rows must preserve seeking and alignment of the remaining lines")
+        try await changeTrack("Only blank lyrics")
+        try await expect("document.querySelector('.lyrics-scroll').hidden && document.querySelectorAll('.lyrics-align').length === 0 && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'", "A provider with only blank cues must preserve native lyrics without empty actions")
+        print("PASS: blank and invisible lyric rejection, preserved emoji joiners, highlight, sync, seeking and native fallback")
+        return
     }
     if CommandLine.arguments.contains("--provider-choice-only") {
         try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before choosing a provider")
