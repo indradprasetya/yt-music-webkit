@@ -41,7 +41,7 @@ Enjoying Music? Give it a **Star** on GitHub to help others discover it.
 - **Custom app icons:** Personalize Music with your own Light and Dark icons. Your choices stay saved across updates.
 - **Extensions:** Use your favorite compatible Safari Web Extensions from the App Store in Music.
 - **Custom scripts:** Import local JavaScript in Settings → Scripts. New scripts start disabled. Enable a script and click Apply Scripts to reload YouTube Music while Settings stays open.
-- **Synced Lyrics (Beta):** Follow along with lyrics that scroll automatically as the song plays. Word-by-word highlighting is available for supported songs. Click a line to jump to that part of the song, or hover over a line and click its sync button when the vocals begin to align the lyrics. The gear lets you adjust timing or choose another matching provider, remembered for that song. Enabled by default; manage it in **Settings → Lyrics**.
+- **Synced Lyrics (Beta):** Follow along with lyrics that scroll automatically as the song plays. Word-by-word highlighting is available for supported songs. Click a line to jump to that part of the song, or move the pointer over the lyrics to reveal sync buttons and click one when its vocals begin. The gear lets you adjust timing or choose another matching provider, remembered for that song. Enabled by default; manage it in **Settings → Lyrics**.
 - **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 <p>
   <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="65%">
@@ -65,7 +65,7 @@ Scripts must be standalone UTF-8 `.js` files up to 1 MB. They run after the docu
 - If your saved provider is unavailable, Music temporarily uses the best available result and explains the fallback in the gear panel.
 - If no readable timed lyrics are found, the original YouTube Music panel stays visible. This includes untimed results and NetEase records containing only credits.
 
-Hover over a timed line, or focus it with the keyboard, to reveal its sync button on the right. Click when that line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
+Move the pointer anywhere over the lyrics to reveal all sync buttons in a fixed column on the right. They fade out when the pointer leaves or stays still for two seconds. Automatic scrolling pauses while the pointer is active and resumes after the buttons fade out; vocal highlighting continues. Keyboard focus on a lyric or sync button also reveals the controls and holds scrolling. Click a sync button when its line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
 
 | Source | API used by Music | Data used for matching and display |
 | --- | --- | --- |

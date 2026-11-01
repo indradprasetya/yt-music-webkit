@@ -29,7 +29,7 @@ let package = Package(
 ''')
     variants = [sys.argv[1:]] if len(sys.argv) > 1 else [
         ["--pause-ui-only"], ["--providers-only"], ["--metadata-only"], ["--amll-only"], ["--translation-data-only"], ["--language-ui-only"], ["--pronunciation-ui-only"], ["--pronunciation-scroll-only"], ["--five-sources-only"],
-        ["--five-ui-only"], ["--provider-choice-only"], ["--align-ui-only"], ["--timing-input-only"], ["--blank-lines-only"],
+        ["--five-ui-only"], ["--provider-choice-only"], ["--align-ui-only"], ["--sync-controls-only"], ["--timing-input-only"], ["--blank-lines-only"],
         ["--source-offsets-only"], ["--mode-offsets-only"], ["--plain-ui-only"], ["--feedback-ui-only"],
         [], ["--english"], ["--media-session"]]
     environment = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")

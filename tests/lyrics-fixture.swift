@@ -983,6 +983,89 @@ setbuf(stdout, nil)
         print("PASS: manual providers, local switching, per-song defaults, reload, source offsets, unavailable fallback and validation")
         return
     }
+    if CommandLine.arguments.contains("--sync-controls-only") {
+        try await expect("!!document.querySelector('.lyrics-align') && lineIsCentered()", "Load centered lyrics before checking sync controls")
+        _ = try await js("""
+            window.syncButtons = () => [...document.querySelectorAll('.lyrics-align')];
+            window.syncVisible = () => syncButtons().every(button => getComputedStyle(button).opacity === '1');
+            window.syncHidden = () => syncButtons().every(button => getComputedStyle(button).opacity === '0'
+                && getComputedStyle(button).pointerEvents === 'none');
+            document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerenter', {pointerType:'mouse', clientX:100, clientY:100})); null
+            """)
+        try await expect("syncVisible()", "Entering any part of the lyrics reveals every sync button")
+        _ = try await js("""
+            window.syncScrollTop = document.querySelector('.lyrics-scroll').scrollTop;
+            window.syncPositions = syncButtons().map(button => button.getBoundingClientRect().top);
+            fixtureTime = 70;
+            document.querySelector('video').dispatchEvent(new Event('timeupdate')); null
+            """)
+        try await Task.sleep(for: .milliseconds(500))
+        try await expect("""
+            document.querySelector('.lyrics-line.is-current')?.textContent.startsWith('Line 7')
+                && document.querySelector('.lyrics-scroll').scrollTop === syncScrollTop
+                && syncButtons().every((button, index) => Math.abs(button.getBoundingClientRect().top - syncPositions[index]) < 1)
+            """, "Playback still highlights lyrics while sync targets and scrolling stay still")
+        try await Task.sleep(for: .milliseconds(600))
+        _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointermove', {pointerType:'mouse', clientX:110, clientY:100})); null")
+        try await Task.sleep(for: .milliseconds(1100))
+        try await expect("syncVisible()", "Pointer movement restarts the idle countdown")
+        _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointermove', {pointerType:'mouse', clientX:110, clientY:100})); null")
+        try await expect("syncHidden() && lineIsCentered()", "Same-position pointer events do not postpone idle hiding or resumed following", seconds: 1.8)
+        _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointermove', {pointerType:'mouse', clientX:120, clientY:100})); null")
+        try await expect("syncVisible()", "Moving again inside the lyrics reveals all controls after idling")
+        let fades = try await web.callAsyncJavaScript("""
+            const scroll = document.querySelector('.lyrics-scroll');
+            scroll.dispatchEvent(new PointerEvent('pointerleave', {pointerType:'mouse'}));
+            await new Promise(resolve => setTimeout(resolve, 70));
+            return syncButtons().every(button => {
+                const opacity = Number(getComputedStyle(button).opacity);
+                return opacity > 0 && opacity < 1;
+            });
+            """, arguments: [:], in: nil, contentWorld: .defaultClient)
+        assert(fades as? Bool == true, "Leaving the lyrics must fade controls instead of hiding them abruptly")
+        _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerenter', {pointerType:'mouse', clientX:120, clientY:100})); null")
+        try await expect("syncVisible()", "Reentering during fade-out cancels hiding")
+        _ = try await js("""
+            document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerleave', {pointerType:'mouse'}));
+            document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; null
+            """)
+        try await expect("syncHidden() && lineIsCentered()", "Leaving the area hides every sync button")
+        for width in [280, 520] {
+            _ = try await js("document.querySelector('#tab-renderer').style.width = '\(width)px'; null")
+            try await expect("lineIsCentered()", "Center wrapped lyrics at \(width)px")
+            _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerenter', {pointerType:'mouse', clientX:100, clientY:100})); null")
+            try await expect("""
+                syncVisible() && (() => {
+                    const buttons = syncButtons();
+                    const right = buttons[0].getBoundingClientRect().right;
+                    const scroll = document.querySelector('.lyrics-scroll');
+                    return scroll.scrollWidth <= scroll.clientWidth && buttons.every(button => {
+                        const bounds = button.getBoundingClientRect();
+                        const text = button.parentElement.querySelector('.lyrics-seek').getBoundingClientRect();
+                        return Math.abs(bounds.right - right) < 1 && Math.abs(bounds.width - 36) < 1
+                            && text.right <= bounds.left;
+                    });
+                })()
+                """, "Short, wrapped, active and inactive lyrics share a fixed sync column at \(width)px")
+            try await snapshot("sync-visible-\(width)")
+            _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerleave', {pointerType:'mouse'})); null")
+            try await expect("syncHidden() && lineIsCentered()", "Restore following after sync interaction at \(width)px")
+            try await snapshot("sync-hidden-\(width)")
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeFirstResponder(web)
+        try await expect("document.hasFocus()", "Focus the page before testing keyboard sync controls")
+        _ = try await js("document.querySelector('.lyrics-align').focus({preventScroll:true}); null")
+        try await expect("getComputedStyle(document.activeElement).opacity === '1'", "Keyboard users can reveal sync controls without pointer activity")
+        _ = try await js("window.syncScrollTop = document.querySelector('.lyrics-scroll').scrollTop; fixtureTime = 110; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await Task.sleep(for: .milliseconds(500))
+        try await expect("document.querySelector('.lyrics-scroll').scrollTop === syncScrollTop", "Keyboard sync focus also holds its target still")
+        _ = try await js("document.activeElement.blur(); null")
+        try await expect("lineIsCentered() && syncHidden()", "Leaving keyboard sync focus restores following")
+        print("PASS: area-wide sync controls, idle reset, smooth fades, stable targets, fixed column, wrapping and keyboard access")
+        return
+    }
     if CommandLine.arguments.contains("--align-ui-only") {
         try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before aligning")
         try await selectVersion("alignTiming01")
@@ -1311,8 +1394,8 @@ setbuf(stdout, nil)
             fixtureTime = 7.5;
             document.querySelector('video').dispatchEvent(new Event('timeupdate'));
             const button = document.querySelector('.lyrics-seek');
-            button.closest('.lyrics-line').style.transform = 'none';
-            button.closest('.lyrics-line').style.transition = 'none';
+            button.style.transform = 'none';
+            button.style.transition = 'none';
             const syllables = button.querySelectorAll('.lyrics-word');
             const range = document.createRange();
             range.setStart(button, 0);
@@ -1423,8 +1506,8 @@ setbuf(stdout, nil)
     try await expect("""
         (() => {
             const rows = document.querySelectorAll('.lyrics-line');
-            const active = getComputedStyle(rows[11]);
-            const near = getComputedStyle(rows[9]);
+            const active = getComputedStyle(rows[11].querySelector('.lyrics-seek'));
+            const near = getComputedStyle(rows[9].querySelector('.lyrics-seek'));
             return new DOMMatrix(active.transform).a > new DOMMatrix(near.transform).a
                 && [...rows].every(row => getComputedStyle(row).filter === 'none');
         })()
