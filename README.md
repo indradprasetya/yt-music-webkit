@@ -57,7 +57,13 @@ Scripts must be standalone UTF-8 `.js` files up to 1 MB. They run after the docu
 
 ### How the five sources are compared
 
-NetEase, LRCLIB, AMLL, Better Lyrics, and lrcmux are peer sources. Each fresh lookup checks all available sources, including after an earlier source supplies word timing. A source in a server-requested cooldown is temporarily skipped. A local cache hit reuses the matching results; Try Again requests a fresh lookup. In Automatic mode, valid word/syllable timing wins over line timing; ties retain the first valid result. The Lyrics gear lists the matching timed providers and lets you switch immediately without another request. A manual choice is remembered locally for the current song and playback mode; choose Automatic to clear it. If the saved provider is unavailable, the best available result is shown temporarily and the gear explains the fallback. Untimed responses, metadata-only NetEase credit records, and results without readable timed vocals leave the original YouTube Music panel visible.
+- Music checks NetEase, LRCLIB, AMLL, Better Lyrics, and lrcmux on each fresh lookup, even after finding word timing. Providers in a requested cooldown are temporarily skipped.
+- Cached results are reused. **Try Again** starts a fresh lookup.
+- **Automatic** prefers valid word/syllable timing over line timing. When timing is equal, the order is **Better Lyrics → NetEase → LRCLIB → AMLL → lrcmux**.
+- The Lyrics gear lists matching timed providers. You can switch between them immediately without another request.
+- Manual choices are saved on this Mac for each song and playback mode. Choose **Automatic** to clear a saved choice.
+- If your saved provider is unavailable, Music temporarily uses the best available result and explains the fallback in the gear panel.
+- If no readable timed lyrics are found, the original YouTube Music panel stays visible. This includes untimed results and NetEase records containing only credits.
 
 Hover over a timed line, or focus it with the keyboard, to reveal its sync button on the right. Click when that line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
 
@@ -102,13 +108,22 @@ The full notices for code actually included in Music remain in `THIRD_PARTY_NOTI
 
 ### Timing controls
 
-Synced Lyrics is on by default; Settings → Lyrics remembers your choice. The active line appears larger and stays centered. Manual scrolling interrupts automatic scrolling, and Reduced Motion disables transitions and smooth scrolling. Click a timed line, or focus it and press Return/Space, to seek with the saved timing adjustment. Close timing settings by clicking outside or pressing Escape.
+- **Enable or disable:** Use **Settings → Lyrics**. Synced Lyrics starts enabled, and Music remembers your choice.
+- **Follow the lyrics:** The active line is larger and stays centered. Manual scrolling pauses automatic scrolling. Reduced Motion disables transitions and smooth scrolling.
+- **Jump to a line:** Click a timed lyric, or focus it and press Return/Space. Seeking includes your saved timing adjustment.
+- **Adjust timing:** Open the gear. The **− / +** buttons shift lyrics by **0.01 seconds**. Click the number to enter seconds manually; press Enter or leave the field to save. Escape cancels an edit. Sync and manual entry preserve millisecond precision.
+- **Check the adjustment:** The footer shows nonzero changes after the timing type, such as `Word-by-word · 0.25 s later` or `Line-by-line · 0.50 s earlier`.
+- **Saved automatically:** Timing is stored on this Mac for each song, playback mode, and lyric source. The panel names the mode and source being adjusted. Song and Video have separate settings even for the same YouTube URL; switching back restores the saved adjustment.
+- **Separate sources:** Adjusting Better Lyrics does not affect NetEase. Different lrcmux sources, such as KuGou and Deezer, also keep separate timing.
+- **Reset:** Clears only the current song/mode/source adjustment and keeps your provider choice. Setting the value to zero has the same effect.
+- **Close settings:** Click outside the panel or press Escape when you are not editing the number.
 
-Timing adjustments are saved automatically on this Mac for each song, detected Song/Video mode and lyric source. The timing panel shows the mode and source being adjusted. Song and Video have separate adjustments even when they share a YouTube URL. An adjustment for Better Lyrics does not affect NetEase; `lrcmux (KuGou)` and `lrcmux (Deezer)` also have separate adjustments. Switching back restores that combination's saved timing. Zero or Reset removes only the current song/mode/source adjustment.
+Saved timing uses the YouTube video ID when available, otherwise the title, artist, and duration. Album metadata affects cached lyrics, not saved timing. An adjustment shifts timestamps; it cannot fix a different arrangement, tempo, or audio speed.
 
-Music identifies each song by its YouTube video ID, or by title, artist and duration when no video ID is available. Album metadata affects lookup caching, not the saved offset identity. Offsets saved by older versions had no source information: those local preferences are preserved, but are not automatically applied to a provider. Adjust the timing once for each song/source you use. An offset shifts timestamps; it does not change audio speed or fix a different arrangement or tempo.
+Older settings are preserved:
 
-Older adjustments with a source but without a mode are retained and used when the mode cannot be identified. Newly identified Song/Video modes start at zero rather than inheriting an adjustment from an unknown version.
+- Adjustments saved without a source are not applied automatically. Adjust timing once for each song/source you use.
+- Adjustments saved with a source but no mode are used only when the mode is unknown. Song and Video start at zero unless they have their own saved adjustment.
 
 ## Privacy
 

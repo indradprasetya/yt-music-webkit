@@ -58,20 +58,22 @@ final class LyricsTransport: URLProtocol {
                 let parts = ["Sedang ", "tak ", "mudah ", "bertemu ", "ra", "sa ", "se", "nang"]
                 let spans = parts.enumerated().map { "<span begin='\($0.offset + 1)' end='\($0.offset + 2)'>\($0.element)</span>" }.joined()
                 body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='10'>\(spans)</p></body></tt>"]
-            } else if title == "Better words" || title == "Better out of range" {
+            } else if title == "Better words" || title == "Better out of range" || title == "Priority words" {
                 body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body dur='3:00'><div><p begin='1' end='4'><span begin='1' end='2'>Hello </span><span begin='2' end='3'>world</span></p><p begin='10' end='12'>Second line</p></div></body></tt>"]
+            } else if ["Priority lines", "Priority NetEase words", "Priority LRCLIB words", "Priority lrcmux words"].contains(title) {
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='4'>Hello world</p><p begin='10' end='12'>Second line</p></body></tt>"]
             } else {
                 status = 404
                 body = ["error": "Not found"]
             }
         } else if url.host == "api.lrcmux.dev" {
-            if title.hasPrefix("Mux ") || title == "Better miss" {
+            if title.hasPrefix("Mux ") || title == "Better miss" || title.hasPrefix("Priority ") {
                 let duration = title == "Mux wrong version" ? 190 : 180
                 let artist = title == "Mux wrong artist" ? "Someone else" : "Artist"
                 let wordEnd = title == "Mux invalid words" ? 190000 : 2000
                 let origin = parameter("album") == "Deezer version" ? "deezer" : "kugou"
                 body = ["track": ["title": title, "artist": artist, "album": "Album", "duration": duration, "isrc": "", "cover": [:]],
-                        "meta": ["level": "word", "source": ["id": origin]],
+                        "meta": ["level": title.hasPrefix("Priority ") && !title.hasSuffix("words") ? "line" : "word", "source": ["id": origin]],
                         "lines": [
                             ["text": "Hello world", "start": 1000, "end": 4000,
                              "words": [["text": "Hello ", "start": 1000, "end": wordEnd], ["text": "world", "start": 2000, "end": 3000]]],
@@ -144,14 +146,14 @@ final class LyricsTransport: URLProtocol {
                         start_ms: 6000
                     \(vocals)
                     """, "instrumental": false]]
-            } else if title == "AMLL standalone" || title == "AMLL partial" { body = [] }
-            else if title == "Cross source" {
+            } else if ["AMLL standalone", "AMLL partial", "Priority lrcmux"].contains(title) { body = [] }
+            else if ["Cross source", "Priority words", "Priority LRCLIB words"].contains(title) {
                 body = [["trackName": title, "artistName": "Artist", "duration": 180,
                          "syncedLyrics": "[00:01.00]First line\n[00:10.00]Second line",
                          "lyricsfile": """
                          version: '1.0'
                          metadata:
-                           title: Cross source
+                           title: \(title)
                            artist: Artist
                            duration_ms: 180000
                          lines:
@@ -176,7 +178,7 @@ final class LyricsTransport: URLProtocol {
             }
         } else if title == "AMLL standalone" {
             body = ["code": -462]
-        } else if ["Fallback", "Blank lyric lines", "Only blank lyrics"].contains(title) || (title == "No match" && !recovered) {
+        } else if ["Fallback", "Blank lyric lines", "Only blank lyrics", "Priority LRCLIB", "Priority lrcmux"].contains(title) || (title == "No match" && !recovered) {
             if title != "No match" { body = ["code": -462] }
             else { body = ["code": 200, "result": ["songs": [] as [Any]]] }
         } else if title == "Word timing" && url.path == "/api/search/pc" {
@@ -195,6 +197,8 @@ final class LyricsTransport: URLProtocol {
                 body = ["code": 200, "lrc": ["lyric": credits + plain], "yrc": ["lyric": credits]]
             } else if title == "AMLL lyric failure" || title == "AMLL partial" {
                 body = ["code": -462]
+            } else if ["Priority words", "Priority NetEase words"].contains(title) {
+                body = ["code": 200, "yrc": ["lyric": "[1000,4000](1000,1000,0)Hello (2000,1000,0)world"]]
             } else if title == "Word timing", url.path.hasSuffix("/v1"), parameter("yv") == "0",
                (Int(parameter("id")) ?? 0) >= 10000 {
                 body = ["code": 200, "yrc": ["lyric": "[1000,4000](1000,1000,0)Hello (2000,1000,0)world"]]
@@ -279,6 +283,20 @@ setbuf(stdout, nil)
         func require(_ condition: Bool, _ message: String) throws {
             guard condition else { throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
         }
+        for (title, source, timing) in [
+            ("Priority lines", "Better Lyrics", 1),
+            ("Priority words", "Better Lyrics", 2),
+            ("Priority NetEase", "NetEase", 1),
+            ("Priority LRCLIB", "LRCLIB", 1),
+            ("Priority lrcmux", "lrcmux (KuGou)", 1),
+            ("Priority NetEase words", "NetEase", 2),
+            ("Priority LRCLIB words", "LRCLIB", 2),
+            ("Priority lrcmux words", "lrcmux (KuGou)", 2)
+        ] {
+            let result = try await lookup(title)
+            try require(result?.source == source && result?.timingQuality == timing,
+                        "\(title): expected \(source) with timing quality \(timing), got \(result?.source ?? "none")")
+        }
         let better = try await lookup("Better words")
         try require(better?.source == "Better Lyrics" && better?.timingQuality == 2,
                     "Better Lyrics word timing must participate and improve existing line timing")
@@ -307,7 +325,7 @@ setbuf(stdout, nil)
         let seconds = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1s' end='3s'><span begin='1s' end='2s'>Hello</span></p></body></tt>", duration: 180)
         try require(seconds?.lines.first?["time"] as? Int == 1000,
                     "Provider TTML seconds offsets must retain their actual timing")
-        print("PASS: five sources, Better Lyrics cache access, lrcmux validation, attribution and timing")
+        print("PASS: five sources, automatic provider priority, timing quality, Better Lyrics cache access, lrcmux validation and attribution")
         return
     }
     if CommandLine.arguments.contains("--metadata-only") {
@@ -591,19 +609,19 @@ setbuf(stdout, nil)
             try await Task.sleep(for: .milliseconds(20))
         }
         assert(defaults.dictionary(forKey: "MusicLyricsProvidersByTrack")?["video:providerChoice01"] as? String == "LRCLIB")
-        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expectSavedOffset(250, for: "video:providerChoice01", source: "LRCLIB")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(10, for: "video:providerChoice01", source: "LRCLIB")
         try await selectVersion("providerChoice02")
         try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-provider-select').value === ''", "A provider choice must apply only to its song")
         try await selectVersion("providerChoice01")
-        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to a song restores its provider and that provider's offset")
+        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to a song restores its provider and that provider's offset")
         _ = try await js("document.documentElement.dataset.beforeProviderReload = 'true'; null")
         web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=providerChoice01"))
         try await expect("!document.documentElement.dataset.beforeProviderReload && document.querySelector('.lyrics-provider-select')?.value === 'LRCLIB' && document.querySelector('.lyrics-seek')?.textContent === 'Fallback first'", "Remember the provider across a full document reload")
         _ = try await js("document.querySelector('[data-reset]').click(); null")
-        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Reset timing without changing the saved provider")
+        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-offset-input').value === '0'", "Reset timing without changing the saved provider")
         _ = try await js("document.querySelector('.lyrics-provider-select').value = ''; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
-        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Automatic restores the best match with its own offset")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-offset-input').value === '0'", "Automatic restores the best match with its own offset")
         try await changeTrack("Better words")
         try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics'", "Load the provider before saving a preference")
         _ = try await js("document.querySelector('.lyrics-provider-select').value = 'LRCLIB'; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
@@ -625,15 +643,15 @@ setbuf(stdout, nil)
         try await selectVersion("alignTiming01")
         try await expect("!!document.querySelector('.lyrics-align')", "Offer a separate align action on timed lyric lines")
         _ = try await js("fixtureTime = 12; window.lastSeek = null; document.querySelector('.lyrics-align').click(); null")
-        try await expect("lastSeek === null && document.querySelector('.lyrics-settings-panel output').textContent === '+11.00 s' && document.querySelector('.lyrics-line.is-current')?.textContent === 'First line'", "Align the line to playback without seeking or silently clamping to ten seconds")
+        try await expect("lastSeek === null && document.querySelector('.lyrics-offset-input').value === '11' && document.querySelector('.lyrics-line.is-current')?.textContent === 'First line'", "Align the line to playback without seeking or silently clamping to ten seconds")
         try await expectSavedOffset(11000, for: "video:alignTiming01")
         _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
         try await expect("lastSeek === 21", "Seeking another line includes the aligned offset")
         _ = try await js("fixtureTime = 4.5; lastSeek = null; document.querySelectorAll('.lyrics-align')[1].click(); null")
-        try await expect("lastSeek === null && document.querySelector('.lyrics-settings-panel output').textContent === '-5.50 s'", "Realignment calculates a fresh offset instead of accumulating the previous one")
+        try await expect("lastSeek === null && document.querySelector('.lyrics-offset-input').value === '-5.5'", "Realignment calculates a fresh offset instead of accumulating the previous one")
         try await expectSavedOffset(-5500, for: "video:alignTiming01")
         try await update()
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '-5.50 s'", "Alignment survives a renderer restart")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '-5.5'", "Alignment survives a renderer restart")
         _ = try await js("fixtureTime = NaN; document.querySelector('.lyrics-align').click(); null")
         try await expectSavedOffset(-5500, for: "video:alignTiming01")
         _ = try await js("fixtureTime = 12; document.querySelector('[data-reset]').click(); null")
@@ -764,43 +782,43 @@ setbuf(stdout, nil)
         let video = "mode:video|video:modeOffsets01"
         try await expect("!!document.querySelector('.lyrics-line')", "Load lyrics before checking playback modes")
         try await selectVersion("modeOffsets01")
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '+0.75 s'", "Retain old adjustments when playback mode is unidentified")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '0.75'", "Retain old adjustments when playback mode is unidentified")
         _ = try await js("""
             const toggle = document.createElement('ytmusic-av-toggle');
             toggle.setAttribute('playback-mode', 'ATV_PREFERRED');
             document.querySelector('ytmusic-player-page').prepend(toggle);
             null
             """)
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s' && document.querySelector('.lyrics-offset-scope')?.textContent === 'Saved for Song mode'",
+        try await expect("document.querySelector('.lyrics-offset-input').value === '0' && document.querySelector('.lyrics-offset-scope')?.textContent === 'Saved for Song mode'",
                          "Song mode must not guess which version an unclassified offset belongs to")
-        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expectSavedOffset(250, for: song)
-        _ = try await js("document.querySelector('ytmusic-av-toggle').setAttribute('playback-mode', 'OMV_PREFERRED'); document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'",
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(10, for: song)
+        _ = try await js("document.querySelector('ytmusic-av-toggle').setAttribute('playback-mode', 'OMV_PREFERRED'); document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '0' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'",
                          "A mode-only switch with identical media ID, duration and title must restore Video timing")
-        try await expectSavedOffset(250, for: song)
-        _ = try await js("document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('.lyrics-seek').click(); null")
-        try await expectSavedOffset(-500, for: video)
-        try await expect("lastSeek === 0.5", "Video seeking must use only its own adjustment")
+        try await expectSavedOffset(10, for: song)
+        _ = try await js("document.querySelector('[data-offset=\"-10\"]').click(); document.querySelector('[data-offset=\"-10\"]').click(); document.querySelector('.lyrics-seek').click(); null")
+        try await expectSavedOffset(-20, for: video)
+        try await expect("lastSeek === 0.98", "Video seeking must use only its own adjustment")
         _ = try await js("document.querySelector('ytmusic-av-toggle').setAttribute('playback-mode', 'ATV_PREFERRED'); null")
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to Song must restore Song timing")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to Song must restore Song timing")
         try await changeTrack("Better words")
-        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "A different lyric source must not inherit the mode's previous source offset")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics' && document.querySelector('.lyrics-offset-input').value === '0'", "A different lyric source must not inherit the mode's previous source offset")
         try await changeTrack("Fixture")
-        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to the same mode and source must restore its adjustment")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to the same mode and source must restore its adjustment")
         let songHTML = pageHTML.replacingOccurrences(of: "<ytmusic-player-page>", with: "<ytmusic-player-page><ytmusic-av-toggle playback-mode='ATV_PREFERRED'></ytmusic-av-toggle>")
         _ = try await js("document.documentElement.dataset.beforeModeReload = 'true'; null")
         web.loadHTMLString(songHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=modeOffsets01"))
-        try await expect("!document.documentElement.dataset.beforeModeReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Mode offsets must survive a full document reload")
+        try await expect("!document.documentElement.dataset.beforeModeReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-offset-input').value === '0.01'", "Mode offsets must survive a full document reload")
         _ = try await js("document.querySelector('[data-reset]').click(); null")
         try await expectSavedOffset(nil, for: song)
-        try await expectSavedOffset(-500, for: video)
+        try await expectSavedOffset(-20, for: video)
         _ = try await js("document.querySelector('ytmusic-player-page').setAttribute('video-mode', ''); null")
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '-0.50 s' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'", "The player's actual video-mode attribute must also restore Video timing")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '-0.02' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'", "The player's actual video-mode attribute must also restore Video timing")
         try await selectVersion("")
-        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Mode-aware metadata fallback must not reuse another media identity")
-        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expectSavedOffset(250, for: #"mode:video|track:["fixture","artist",180]"#)
+        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0'", "Mode-aware metadata fallback must not reuse another media identity")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(10, for: #"mode:video|track:["fixture","artist",180]"#)
         _ = try await js("""
             for (const trackKey of ['mode:podcast|video:bad|source:NetEase', 'mode:video|video:bad/id|source:NetEase', 'mode:video|video:bad|source:Unknown']) {
                 webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey, milliseconds:250});
@@ -816,42 +834,107 @@ setbuf(stdout, nil)
         try await checkModeOffsets()
         return
     }
+    if CommandLine.arguments.contains("--timing-input-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load lyrics before editing timing")
+        try await selectVersion("timingInput01")
+        try await expect("!document.querySelector('.lyrics-toolbar').hidden && !document.querySelector('.lyrics-scroll').hidden", "Wait for the selected song's timing controls before editing")
+        _ = try await js("document.querySelector('.lyrics-settings-button').click(); null")
+        try await expect("document.querySelector('.lyrics-offset-input')?.type === 'number'", "Timing must have an editable numeric field")
+        _ = try await js("document.querySelector('[data-offset=\"-10\"]').click(); null")
+        try await expectSavedOffset(-10, for: "video:timingInput01")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(nil, for: "video:timingInput01")
+        _ = try await js("""
+            window.timingInput = document.querySelector('.lyrics-offset-input');
+            timingInput.focus();
+            timingInput.value = '-6.643';
+            timingInput.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+            null
+            """)
+        try await expectSavedOffset(-6643, for: "video:timingInput01")
+        try await expect("document.querySelector('.lyrics-source').textContent.endsWith('· 6.643 s earlier')", "Manual millisecond precision must appear in the footer")
+        _ = try await js("timingInput.focus(); timingInput.value = '2'; timingInput.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true})); null")
+        try await expect("timingInput.value === '-6.643' && !document.querySelector('.lyrics-settings-panel').hidden", "Escape must discard a draft without closing timing settings")
+        try await expectSavedOffset(-6643, for: "video:timingInput01")
+        for value in ["", "abc", "Infinity", "3600.001", "-3600.001"] {
+            _ = try await web.callAsyncJavaScript("""
+                timingInput.value = value;
+                timingInput.dispatchEvent(new Event('change'));
+                return null;
+                """, arguments: ["value": value], in: nil, contentWorld: .defaultClient)
+            try await expect("!timingInput.checkValidity()", "Invalid manual offsets must be rejected by the numeric field")
+            try await expectSavedOffset(-6643, for: "video:timingInput01")
+        }
+        for (value, milliseconds) in [("1.235", 1235), ("3600", 3600000), ("-3600", -3600000)] {
+            _ = try await web.callAsyncJavaScript("""
+                timingInput.value = value;
+                timingInput.dispatchEvent(new Event('change'));
+                return null;
+                """, arguments: ["value": value], in: nil, contentWorld: .defaultClient)
+            try await expectSavedOffset(milliseconds, for: "video:timingInput01")
+        }
+        _ = try await js("fixtureTime = 3.217; document.querySelector('.lyrics-align').click(); null")
+        try await expectSavedOffset(2217, for: "video:timingInput01")
+        try await expect("timingInput.value === '2.217'", "Sync must retain its exact millisecond offset in the editable field")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(2227, for: "video:timingInput01")
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: "video:timingInput01")
+        try await expect("timingInput.value === '0' && !document.querySelector('.lyrics-source').textContent.includes('later')", "Reset must clear the input and footer adjustment")
+        _ = try await js("timingInput.value = '-6.643'; timingInput.dispatchEvent(new Event('change')); null")
+        try await expectSavedOffset(-6643, for: "video:timingInput01")
+        try await update()
+        try await expect("document.querySelector('.lyrics-offset-input')?.value === '-6.643'", "Manual timing must survive a renderer restart")
+        print("PASS: 10 ms buttons, manual seconds, Enter, Escape, validation, exact Sync precision, reset and persistence")
+        return
+    }
     if CommandLine.arguments.contains("--source-offsets-only") {
         try await expect("!!document.querySelector('.lyrics-line')", "Load lyrics before checking per-source timing")
         try await selectVersion("sourceOffsets01")
         try await changeTrack("Better words")
         try await expect("document.querySelector('.lyrics-source').textContent.includes('Better Lyrics')", "Load Better Lyrics for a fixed video identity")
-        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "An old offset with no known provider must not be applied to an arbitrary source")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from Better Lyrics · Word-by-word'", "Unadjusted lyrics must not show an offset in the footer")
+        try await expect("document.querySelector('.lyrics-offset-input').value === '0'", "An old offset with no known provider must not be applied to an arbitrary source")
         try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics'", "Timing settings must name the source whose adjustment will be saved")
-        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expectSavedOffset(250, for: "video:sourceOffsets01", source: "Better Lyrics")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(10, for: "video:sourceOffsets01", source: "Better Lyrics")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from Better Lyrics · Word-by-word · 0.01 s later'", "The footer must show a positive offset and explain that lyrics appear later")
+        try await snapshot("timing-offset-later")
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
-        try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase') && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Another source for the same song must start with its own offset")
-        _ = try await js("document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('[data-offset=\"-250\"]').click(); null")
-        try await expectSavedOffset(-500, for: "video:sourceOffsets01")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase') && document.querySelector('.lyrics-offset-input').value === '0'", "Another source for the same song must start with its own offset")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from NetEase · Line-by-line'", "Switching sources must clear the previous source's footer offset")
+        _ = try await js("document.querySelector('[data-offset=\"-10\"]').click(); document.querySelector('[data-offset=\"-10\"]').click(); null")
+        try await expectSavedOffset(-20, for: "video:sourceOffsets01")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from NetEase · Line-by-line · 0.02 s earlier'", "The footer must show a negative offset and explain that lyrics appear earlier")
+        window.setContentSize(NSSize(width: 400, height: 500))
+        try await expect("innerWidth === 400 && document.querySelector('.lyrics-source').scrollWidth <= document.querySelector('.lyrics-source').clientWidth", "The timing footer must fit a narrow window")
+        try await snapshot("timing-offset-earlier-narrow")
+        window.setContentSize(NSSize(width: 900, height: 600))
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
-        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to a source must restore its own saved timing")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to a source must restore its own saved timing")
         _ = try await js("document.querySelector('.lyrics-seek').click(); null")
-        try await expect("lastSeek === 1.25", "Seeking must use the selected source's offset")
+        try await expect("lastSeek === 1.01", "Seeking must use the selected source's offset")
         try await update()
-        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Source offsets must survive a renderer restart")
-        assert(MusicLyrics(defaults: defaults).trackOffsets["video:sourceOffsets01|source:Better Lyrics"] == 250)
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-offset-input').value === '0.01'", "Source offsets must survive a renderer restart")
+        try await expect("document.querySelector('.lyrics-source').textContent.endsWith('· 0.01 s later')", "The footer must restore the saved offset after a renderer restart")
+        assert(MusicLyrics(defaults: defaults).trackOffsets["video:sourceOffsets01|source:Better Lyrics"] == 10)
         _ = try await js("document.querySelector('[data-reset]').click(); null")
         try await expectSavedOffset(nil, for: "video:sourceOffsets01", source: "Better Lyrics")
-        try await expectSavedOffset(-500, for: "video:sourceOffsets01")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from Better Lyrics · Word-by-word'", "Reset must remove the timing adjustment from the footer")
+        try await expectSavedOffset(-20, for: "video:sourceOffsets01")
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
-        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '-0.50 s'", "Reset must not erase another source's timing")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'NetEase' && document.querySelector('.lyrics-offset-input').value === '-0.02'", "Reset must not erase another source's timing")
         _ = try await js("document.querySelector('[data-reset]').click(); null")
         try await expectSavedOffset(nil, for: "video:sourceOffsets01")
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
         try await changeTrack("Mux words")
         try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (KuGou)'", "Aggregators must retain their explicitly reported upstream source identity")
-        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-        try await expectSavedOffset(250, for: "video:sourceOffsets01", source: "lrcmux (KuGou)")
+        _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
+        try await expectSavedOffset(10, for: "video:sourceOffsets01", source: "lrcmux (KuGou)")
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Deezer version'; null")
-        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (Deezer)' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Different upstream providers within an aggregator must not share offsets")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (Deezer)' && document.querySelector('.lyrics-offset-input').value === '0'", "Different upstream providers within an aggregator must not share offsets")
         _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
-        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (KuGou)' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to an upstream source must restore its offset")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (KuGou)' && document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to an upstream source must restore its offset")
         _ = try await js("document.querySelector('[data-reset]').click(); null")
         try await expectSavedOffset(nil, for: "video:sourceOffsets01", source: "lrcmux (KuGou)")
         assert(defaults.object(forKey: offsetsKey) == nil, "Resetting all current offsets must remove only the new preference container")
@@ -962,9 +1045,9 @@ setbuf(stdout, nil)
     _ = try await js("document.querySelector('[data-reset]').click(); null")
     try await expect("!document.querySelector('.lyrics-settings-panel').hidden", "Using a timing control must keep the popover open")
     try await expect("!!document.querySelector('button[aria-label=\"Close lyric settings\"]')", "Timing settings need an explicit close button")
-    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+    _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
     _ = try await js("document.querySelector('button[aria-label=\"Close lyric settings\"]').click(); null")
-    try await expect("document.querySelector('.lyrics-settings-panel').hidden && document.querySelector('.lyrics-settings-button').getAttribute('aria-expanded') === 'false' && document.activeElement === document.querySelector('.lyrics-settings-button') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Closing timing settings must restore gear focus without changing the offset")
+    try await expect("document.querySelector('.lyrics-settings-panel').hidden && document.querySelector('.lyrics-settings-button').getAttribute('aria-expanded') === 'false' && document.activeElement === document.querySelector('.lyrics-settings-button') && document.querySelector('.lyrics-offset-input').value === '0.01'", "Closing timing settings must restore gear focus without changing the offset")
     _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('[data-reset]').click(); null")
     _ = try await js("document.body.click(); null")
     try await expect("document.querySelector('.lyrics-settings-panel').hidden && document.querySelector('.lyrics-settings-button').getAttribute('aria-expanded') === 'false'", "Clicking outside must dismiss timing settings")
@@ -1038,40 +1121,40 @@ setbuf(stdout, nil)
     _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('.lyrics-seek')?.click(); null")
     try await expect("lastSeek === 1 && document.querySelector('.lyrics-line.is-current')?.textContent === 'First line' && document.querySelector('.lyrics-settings-panel').hidden", "Clicking a timed lyric must dismiss settings and seek in the same click")
     try await selectVersion("fixtureAA01")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "An unconfigured version starts with zero offset")
-    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); document.querySelectorAll('.lyrics-seek')[1].click(); null")
-    try await expect("lastSeek === 10.25 && document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Click-to-seek must include the configured timing offset")
-    try await expectSavedOffset(250, for: "video:fixtureAA01")
-    assert(MusicLyrics(defaults: defaults).trackOffsets["video:fixtureAA01|source:NetEase"] == 250, "A new native instance must read the saved offset")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0'", "An unconfigured version starts with zero offset")
+    _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); document.querySelectorAll('.lyrics-seek')[1].click(); null")
+    try await expect("lastSeek === 10.01 && document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Click-to-seek must include the configured timing offset")
+    try await expectSavedOffset(10, for: "video:fixtureAA01")
+    assert(MusicLyrics(defaults: defaults).trackOffsets["video:fixtureAA01|source:NetEase"] == 10, "A new native instance must read the saved offset")
     _ = try await js("document.documentElement.dataset.beforeOffsetReload = 'true'; null")
     web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=fixtureAA01"))
-    try await expect("!document.documentElement.dataset.beforeOffsetReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "A full document load without apply must restore the latest saved offset")
+    try await expect("!document.documentElement.dataset.beforeOffsetReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-offset-input').value === '0.01'", "A full document load without apply must restore the latest saved offset")
     lyrics.isEnabled = false
     try await update()
     lyrics.isEnabled = true
     try await update()
-    try await expect("!!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "The song offset must survive a runtime restart through native preferences")
+    try await expect("!!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-offset-input').value === '0.01'", "The song offset must survive a runtime restart through native preferences")
     try await selectVersion("fixtureBB02")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "A different video with identical metadata must not inherit the previous offset")
-    _ = try await js("document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('[data-offset=\"-250\"]').click(); null")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0'", "A different video with identical metadata must not inherit the previous offset")
+    _ = try await js("document.querySelector('[data-offset=\"-10\"]').click(); document.querySelector('[data-offset=\"-10\"]').click(); null")
     try await selectVersion("fixtureAA01")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to a version must restore its own saved offset")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0.01'", "Returning to a version must restore its own saved offset")
     _ = try await js("document.querySelector('[data-reset]').click(); null")
     try await expectSavedOffset(nil, for: "video:fixtureAA01")
     _ = try await js("document.documentElement.dataset.beforeOffsetReload = 'true'; null")
     web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=fixtureAA01"))
-    try await expect("!document.documentElement.dataset.beforeOffsetReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "A reset offset must not reappear after a full document load")
+    try await expect("!document.documentElement.dataset.beforeOffsetReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-offset-input').value === '0'", "A reset offset must not reappear after a full document load")
     try await selectVersion("fixtureBB02")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '-0.50 s'", "Reset must affect only the current version")
-    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); document.querySelector('[data-offset=\"250\"]').click(); null")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '-0.02'", "Reset must affect only the current version")
+    _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); document.querySelector('[data-offset=\"10\"]').click(); null")
     try await expectSavedOffset(nil, for: "video:fixtureBB02")
     try await selectVersion("")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Missing video IDs fall back to track metadata")
-    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0'", "Missing video IDs fall back to track metadata")
+    _ = try await js("document.querySelector('[data-offset=\"10\"]').click(); null")
     try await changeTrack("Cover version")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "The metadata fallback must separate different versions")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0'", "The metadata fallback must separate different versions")
     try await changeTrack("Fixture")
-    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Metadata fallback offsets must also be restored")
+    try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-input').value === '0.01'", "Metadata fallback offsets must also be restored")
     _ = try await js("document.querySelector('[data-reset]').click(); null")
     try await expectSavedOffset(nil, for: #"track:["fixture","artist",180]"#)
     assert(defaults.object(forKey: offsetsKey) == nil, "Zero offsets must leave no stored entries or empty container")

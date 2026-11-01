@@ -257,9 +257,22 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-close-button { position: absolute; top: 4px; right: 4px; }
                 #music-custom-lyrics .lyrics-offset-controls button svg,
                 #music-custom-lyrics .lyrics-close-button svg { width: 20px; height: 20px; }
-                #music-custom-lyrics .lyrics-offset-controls output {
-                    text-align: center; font-size: 16px; font-weight: 500;
+                #music-custom-lyrics .lyrics-offset-value {
+                    display: flex; align-items: center; justify-content: center; gap: 4px;
+                    font-size: 16px; font-weight: 500;
                     line-height: 24px; font-variant-numeric: tabular-nums;
+                }
+                #music-custom-lyrics .lyrics-offset-input {
+                    box-sizing: border-box; width: 9ch; min-width: 0; min-height: 36px; padding: 4px 2px;
+                    border: 0; border-radius: 4px; color: inherit; background: transparent;
+                    font: inherit; text-align: center; appearance: textfield;
+                }
+                #music-custom-lyrics .lyrics-offset-input::-webkit-inner-spin-button,
+                #music-custom-lyrics .lyrics-offset-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+                #music-custom-lyrics .lyrics-offset-input:hover,
+                #music-custom-lyrics .lyrics-offset-input:focus { background: rgba(255,255,255,.08); }
+                #music-custom-lyrics .lyrics-offset-input:focus-visible {
+                    outline: 2px solid rgba(255,255,255,.78); outline-offset: 2px;
                 }
                 #music-custom-lyrics .lyrics-offset-footer {
                     display: flex; align-items: center; justify-content: space-between;
@@ -522,7 +535,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 offset = Math.round(Math.max(-3_600_000, Math.min(3_600_000, value)));
                 if (offset === 0) delete savedOffsets[offsetTrackKey];
                 else savedOffsets[offsetTrackKey] = offset;
-                overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
+                updateTimingDisplay();
+                overlay.querySelector('.lyrics-feedback').textContent = `Timing ${formatOffset(offset)}.`;
                 window.webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey: offsetTrackKey, milliseconds: offset});
                 updateActiveLine(true);
                 return true;
@@ -556,11 +570,14 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
                             </button>
                             <div class="lyrics-offset-controls">
-                                <button type="button" data-offset="-250" aria-label="Show lyrics earlier by 0.25 seconds" title="Earlier by 0.25 s">
+                                <button type="button" data-offset="-10" aria-label="Show lyrics earlier by 0.01 seconds" title="Earlier by 0.01 s">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/></svg>
                                 </button>
-                                <output aria-label="Timing offset" aria-live="polite"></output>
-                                <button type="button" data-offset="250" aria-label="Show lyrics later by 0.25 seconds" title="Later by 0.25 s">
+                                <label class="lyrics-offset-value">
+                                    <input class="lyrics-offset-input" type="number" step="any" min="-3600" max="3600" required aria-label="Timing offset in seconds" title="Enter timing offset in seconds">
+                                    <span aria-hidden="true">s</span>
+                                </label>
+                                <button type="button" data-offset="10" aria-label="Show lyrics later by 0.01 seconds" title="Later by 0.01 s">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                                 </button>
                             </div>
@@ -583,6 +600,16 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     <footer class="lyrics-source">Synced Lyrics</footer>
                     <span class="lyrics-feedback" role="status"></span>
                 `;
+                const timingInput = element.querySelector('.lyrics-offset-input');
+                const saveTimingInput = () => timingInput.reportValidity() && setOffset(timingInput.valueAsNumber * 1000);
+                timingInput.addEventListener('change', saveTimingInput);
+                timingInput.addEventListener('keydown', event => {
+                    event.stopPropagation();
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        if (saveTimingInput()) timingInput.blur();
+                    }
+                });
                 element.querySelector('.lyrics-settings-button').addEventListener('click', event => {
                     const button = event.currentTarget;
                     const settings = element.querySelector('.lyrics-settings-panel');
@@ -598,7 +625,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (event.key === 'Escape' && !element.querySelector('.lyrics-settings-panel').hidden) {
                         event.preventDefault();
                         event.stopPropagation();
-                        closeSettings(true);
+                        if (document.activeElement === timingInput) {
+                            timingInput.value = String(offset / 1000);
+                            timingInput.blur();
+                        } else closeSettings(true);
                     }
                 }, {capture: true, signal: lifetime.signal});
                 element.querySelectorAll('[data-offset]').forEach(button => button.addEventListener('click', () => {
@@ -625,7 +655,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     }, {passive: true});
                 }
                 resizeObserver.observe(scroll);
-                element.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
+                timingInput.value = String(offset / 1000);
                 return element;
             }
 
@@ -640,7 +670,16 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
 
             function formatOffset(value) {
                 const seconds = value / 1000;
-                return `${seconds > 0 ? '+' : ''}${seconds.toFixed(2)} s`;
+                return `${seconds > 0 ? '+' : ''}${seconds.toFixed(value % 10 === 0 ? 2 : 3)} s`;
+            }
+
+            function updateTimingDisplay() {
+                overlay.querySelector('.lyrics-offset-input').value = String(offset / 1000);
+                const source = overlay.querySelector('.lyrics-offset-source').textContent;
+                const timing = activeLines.some(line => line.words?.length > 0)
+                    ? 'Word-by-word' : activeLines.some(line => line.time != null) ? 'Line-by-line' : 'No timing';
+                const adjustment = offset === 0 ? '' : ` · ${formatOffset(offset).replace(/^[+-]/, '')} ${offset < 0 ? 'earlier' : 'later'}`;
+                overlay.querySelector('.lyrics-source').textContent = `Lyrics from ${source} · ${timing}${adjustment}`;
             }
 
             function cancelContentTransition() {
@@ -783,7 +822,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 return lines;
             }
 
-            function renderLines(lines, source) {
+            function renderLines(lines) {
                 cancelScroll();
                 stopWordSyncLoop();
                 activeLines = lines;
@@ -792,9 +831,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (!overlay.hidden && lyricsTab()) panel.classList.add('music-custom-lyrics-active');
                 const synchronized = lines.some(line => line.time != null);
                 overlay.querySelector('.lyrics-toolbar').hidden = !synchronized;
-                const timing = lines.some(line => line.words?.length > 0)
-                    ? 'Word-by-word' : synchronized ? 'Line-by-line' : 'No timing';
-                overlay.querySelector('.lyrics-source').textContent = `Lyrics from ${source} · ${timing}`;
+                updateTimingDisplay();
                 const list = overlay.querySelector('.lyrics-lines');
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 scroll.setAttribute('aria-busy', 'false');
@@ -1115,11 +1152,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     : 'No other providers matched.';
                 offsetTrackKey = `${identity}|source:${selected.source}`;
                 offset = savedOffsets[offsetTrackKey] ?? 0;
-                overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
                 overlay.querySelector('.lyrics-offset-source').textContent = selected.source;
                 overlay.querySelector('.lyrics-offset-scope').textContent = track.playbackMode
                     ? `Saved for ${track.playbackMode === 'video' ? 'Video' : 'Song'} mode` : 'Saved for this song';
-                renderLines(selected.lines, selected.source);
+                renderLines(selected.lines);
             }
 
             async function loadTrack(force = false) {
@@ -1154,7 +1190,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 offsetTrackKey = '';
                 offset = 0;
                 currentResult = null;
-                overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
+                overlay.querySelector('.lyrics-offset-input').value = String(offset / 1000);
                 overlay.querySelector('.lyrics-offset-source').textContent = '';
                 showMessage('Looking for synced lyrics…');
                 try {

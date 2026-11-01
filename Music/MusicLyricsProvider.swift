@@ -155,7 +155,7 @@ final class MusicLyricsProvider {
         var best: Record?
         var alternatives: [Record] = []
         var matchedNetEaseIDs: Set<String> = []
-        for source in ["NetEase", "LRCLIB", "AMLL", "Better Lyrics", "lrcmux"] {
+        for source in ["Better Lyrics", "NetEase", "LRCLIB", "AMLL", "lrcmux"] {
             try Task.checkCancellation()
             if let until = cooldown[source], until > Date() {
                 failures.append("\(source) is busy.")
