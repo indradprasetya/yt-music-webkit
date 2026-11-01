@@ -6,7 +6,9 @@ import WebKit
 final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMessageHandler {
     private let defaults: UserDefaults
     private let enabledKey = "MusicCustomLyricsEnabled"
-    private let offsetsKey = "MusicLyricsOffsetsByTrack"
+    // Legacy offsets have no source identity; keep them untouched rather than guessing a provider.
+    private let offsetsKey = "MusicLyricsOffsetsByTrackAndSource"
+    private let providersKey = "MusicLyricsProvidersByTrack"
     private var installedScript: WKUserScript?
     private let provider: MusicLyricsProvider
     private var lookupTask: Task<Void, Never>?
@@ -20,6 +22,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
     func connect(to controller: WKUserContentController) {
         controller.addScriptMessageHandler(self, contentWorld: .defaultClient, name: "musicLyricsLookup")
         controller.add(self, contentWorld: .defaultClient, name: "musicLyricsOffset")
+        controller.add(self, contentWorld: .defaultClient, name: "musicLyricsProvider")
     }
 
     func cancelLookup() {
@@ -60,16 +63,35 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             && (origin.port == 0 || origin.port == 443)
     }
 
+    private func validSource(_ source: String) -> Bool {
+        ["NetEase", "LRCLIB", "AMLL", "Better Lyrics", "lrcmux", "lrcmux (Deezer)",
+               "lrcmux (KuGou)", "lrcmux (YouTube Music)", "lrcmux (Genius)", "lrcmux (Musixmatch)"]
+            .contains(source)
+    }
+
     private func validOffsetKey(_ key: String) -> Bool {
-        if key.hasPrefix("video:") {
-            return key.range(of: #"^video:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil
+        guard key.utf8.count <= 2200, let separator = key.range(of: "|source:", options: .backwards),
+              validSource(String(key[separator.upperBound...])) else { return false }
+        return validTrackKey(String(key[..<separator.lowerBound]))
+    }
+
+    private func validTrackKey(_ key: String) -> Bool {
+        guard key.utf8.count <= 2100 else { return false }
+        var identity = key
+        if identity.hasPrefix("mode:") {
+            guard let separator = identity.firstIndex(of: "|"),
+                  ["mode:song", "mode:video"].contains(String(identity[..<separator])) else { return false }
+            identity = String(identity[identity.index(after: separator)...])
         }
-        return key.hasPrefix("track:") && key.count > 6 && key.utf8.count <= 2048
+        if identity.hasPrefix("video:") {
+            return identity.range(of: #"^video:[A-Za-z0-9_-]{1,128}$"#, options: .regularExpression) != nil
+        }
+        return identity.hasPrefix("track:") && identity.count > 6 && identity.utf8.count <= 2048
     }
 
     private func validOffset(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-              let milliseconds = number as? Int, (-10_000...10_000).contains(milliseconds) else { return nil }
+              let milliseconds = number as? Int, (-3_600_000...3_600_000).contains(milliseconds) else { return nil }
         return milliseconds
     }
 
@@ -80,7 +102,25 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         }
     }
 
+    private var trackProviders: [String: String] {
+        (defaults.dictionary(forKey: providersKey) ?? [:]).reduce(into: [:]) { result, entry in
+            guard validTrackKey(entry.key), let source = entry.value as? String, validSource(source) else { return }
+            result[entry.key] = source
+        }
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "musicLyricsProvider" {
+            guard isEnabled, isYouTubeMusic(message.frameInfo), let body = message.body as? [String: Any],
+                  let key = body["trackKey"] as? String, validTrackKey(key),
+                  let source = body["source"] as? String, source.isEmpty || validSource(source) else { return }
+            var providers = trackProviders
+            if source.isEmpty { providers.removeValue(forKey: key) } else { providers[key] = source }
+            if providers.isEmpty { defaults.removeObject(forKey: providersKey) }
+            else { defaults.set(providers, forKey: providersKey) }
+            apply(to: controller)
+            return
+        }
         guard message.name == "musicLyricsOffset", isYouTubeMusic(message.frameInfo),
               let body = message.body as? [String: Any], let key = body["trackKey"] as? String,
               validOffsetKey(key), let value = validOffset(body["milliseconds"]) else { return }
@@ -107,7 +147,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         installedScript = nil
         guard isEnabled else { return }
         let offsets = (try? JSONEncoder().encode(trackOffsets)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        let script = WKUserScript(source: Self.source(offsets: offsets),
+        let providers = (try? JSONEncoder().encode(trackProviders)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let script = WKUserScript(source: Self.source(offsets: offsets, providers: providers),
                                   injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient)
         controller.addUserScript(script)
         installedScript = script
@@ -128,7 +169,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         }
     }
 
-    private static func source(offsets: String) -> String {
+    private static func source(offsets: String, providers: String) -> String {
         """
         (() => {
             if (location.origin !== 'https://music.youtube.com') return;
@@ -171,13 +212,37 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-settings-button svg { width: 19px; height: 19px; fill: currentColor; }
                 #music-custom-lyrics .lyrics-settings-panel {
                     position: absolute; top: 42px; right: 0; z-index: 3;
-                    width: 224px; max-width: 100%; box-sizing: border-box;
+                    width: 248px; max-width: 100%; max-height: calc(100vh - 180px); overflow-y: auto; box-sizing: border-box;
                     padding: 12px; border: 0; border-radius: 8px; pointer-events: auto;
                     background: var(--ytmusic-menu-background, #282828); color: #f5f5f5;
                     box-shadow: 0 8px 24px rgba(0,0,0,.32);
                 }
                 #music-custom-lyrics .lyrics-settings-panel h2 {
-                    margin: 0 36px 12px 0; font-size: 14px; font-weight: 500; line-height: 20px;
+                    margin: 0 36px 8px 0; font-size: 14px; font-weight: 500; line-height: 20px;
+                }
+                #music-custom-lyrics .lyrics-provider-section {
+                    margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12);
+                }
+                #music-custom-lyrics .lyrics-provider-label {
+                    display: block; margin-bottom: 4px; color: rgba(255,255,255,.7); font-size: 12px; line-height: 16px;
+                }
+                #music-custom-lyrics .lyrics-provider-control { position: relative; }
+                #music-custom-lyrics .lyrics-provider-select {
+                    display: block; width: 100%; min-height: 36px; box-sizing: border-box;
+                    padding: 6px 28px 6px 0; border: 0; border-radius: 4px;
+                    color: #f5f5f5; background: transparent; color-scheme: dark; font: inherit; font-size: 14px;
+                    -webkit-appearance: none; appearance: none; cursor: pointer; text-overflow: ellipsis;
+                }
+                #music-custom-lyrics .lyrics-provider-select:hover { background: rgba(255,255,255,.08); }
+                #music-custom-lyrics .lyrics-provider-select:focus-visible {
+                    outline: 2px solid rgba(255,255,255,.78); outline-offset: 2px;
+                }
+                #music-custom-lyrics .lyrics-provider-chevron {
+                    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+                    width: 18px; height: 18px; color: rgba(255,255,255,.7); pointer-events: none;
+                }
+                #music-custom-lyrics .lyrics-provider-note {
+                    margin: 4px 0 0; color: rgba(255,255,255,.65); font-size: 11px; line-height: 16px;
                 }
                 #music-custom-lyrics .lyrics-offset-controls {
                     display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px;
@@ -237,15 +302,36 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-line {
                     margin: 0; color: rgba(245,245,245,.24); font-size: clamp(20px, 1.7vw, 26px);
                     font-weight: 700; line-height: 1.28; letter-spacing: -.018em;
-                    transition: transform .6s cubic-bezier(.16,1,.3,1);
+                    transition: transform .42s cubic-bezier(.16,1,.3,1), color .3s ease;
+                }
+                /* WebKit grid rows can retain stale lyric heights after resizing. */
+                #music-custom-lyrics .lyrics-line:has(> .lyrics-align) {
+                    position: relative; padding-inline-end: 48px;
                 }
                 #music-custom-lyrics .lyrics-line + .lyrics-line { margin-top: 24px; }
                 #music-custom-lyrics .lyrics-line.is-credit + .lyrics-line.is-credit { margin-top: 0; }
                 #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line {
-                    transform: scale(.94); transform-origin: left center;
+                    transform: translateY(3px) scale(.94); transform-origin: left center;
                 }
                 #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line.is-current {
-                    color: #fff; transform: scale(1);
+                    color: #fff; transform: translateY(-3px) scale(1);
+                    text-shadow: 0 0 8px rgba(255,255,255,.12);
+                }
+                #music-custom-lyrics .lyrics-line .lyrics-word {
+                    display: inline; white-space: pre;
+                }
+                #music-custom-lyrics .lyrics-line.is-current .lyrics-word {
+                    color: rgba(255,255,255,.32);
+                }
+                #music-custom-lyrics .lyrics-letter { display: inline; }
+                #music-custom-lyrics .lyrics-line.is-current .lyrics-word.is-sung .lyrics-letter,
+                #music-custom-lyrics .lyrics-line.is-current .lyrics-word.is-current .lyrics-letter {
+                    color: transparent; -webkit-text-fill-color: transparent;
+                    background-image: linear-gradient(to right, #fff 0, #fff var(--word-progress, 0%),
+                        rgba(255,255,255,.34) var(--word-progress, 0%), rgba(255,255,255,.34) 100%);
+                    background-size: 100% 100%; background-repeat: no-repeat;
+                    background-clip: text; -webkit-background-clip: text;
+                    text-shadow: 0 0 6px rgba(255,255,255,.13);
                 }
                 #music-custom-lyrics .lyrics-lines .lyrics-line.is-credit {
                     font-size: 14px; font-weight: 400; line-height: 1.5; letter-spacing: normal;
@@ -253,7 +339,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 #music-custom-lyrics .lyrics-lines.is-plain .lyrics-line { color: #f5f5f5; }
                 #music-custom-lyrics .lyrics-seek {
-                    display: block; width: 100%; min-height: 32px; padding: 2px 0;
+                    display: block; width: 100%; min-width: 0; min-height: 36px; padding: 2px 0; overflow-wrap: anywhere;
                     border: 0; color: inherit; background: transparent; text-align: left;
                     font: inherit; line-height: inherit; letter-spacing: inherit;
                     cursor: pointer; -webkit-user-select: none;
@@ -261,6 +347,26 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-seek:hover { background: rgba(255,255,255,.04); }
                 #music-custom-lyrics .lyrics-seek:focus-visible { outline-offset: -2px; border-radius: 4px; }
                 #music-custom-lyrics .lyrics-line:not(.is-current) .lyrics-seek:focus-visible { color: rgba(245,245,245,.8); }
+                #music-custom-lyrics .lyrics-align {
+                    position: absolute; inset-inline-end: 0; top: 50%; transform: translateY(-50%);
+                    display: grid; place-items: center; width: 36px; height: 36px;
+                    padding: 0; border: 0; border-radius: 50%; color: rgba(255,255,255,.8);
+                    background: transparent; cursor: pointer; opacity: 0; pointer-events: none;
+                }
+                #music-custom-lyrics .lyrics-line:hover > .lyrics-align,
+                #music-custom-lyrics .lyrics-line:focus-within > .lyrics-align { opacity: 1; pointer-events: auto; }
+                #music-custom-lyrics .lyrics-align:hover,
+                #music-custom-lyrics .lyrics-align:focus-visible { color: #fff; background: rgba(255,255,255,.12); }
+                #music-custom-lyrics .lyrics-align:focus-visible { outline-offset: -2px; }
+                #music-custom-lyrics .lyrics-align:active { background: rgba(255,255,255,.2); }
+                #music-custom-lyrics .lyrics-align svg { width: 20px; height: 20px; }
+                #music-custom-lyrics .lyrics-feedback {
+                    position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+                    clip-path: inset(50%); white-space: nowrap;
+                }
+                @media (hover: none) {
+                    #music-custom-lyrics .lyrics-align { opacity: 1; pointer-events: auto; }
+                }
                 #music-custom-lyrics .lyrics-message {
                     display: grid; flex: 1; place-content: center; gap: 8px;
                     color: rgba(255,255,255,.7); text-align: center; font-size: 15px; line-height: 1.45;
@@ -272,33 +378,81 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 #music-custom-lyrics.is-notice {
                     position: relative; inset: auto; flex: 0 0 auto;
-                    margin-bottom: 12px; padding: 10px 16px;
-                    border-bottom: 1px solid rgba(255,255,255,.16);
+                    margin-bottom: 0; padding: 8px 12px;
+                    border-bottom: 1px solid rgba(255,255,255,.08);
                     background: transparent;
                 }
                 #music-custom-lyrics.is-notice .lyrics-toolbar,
                 #music-custom-lyrics.is-notice .lyrics-scroll,
                 #music-custom-lyrics.is-notice .lyrics-source { display: none; }
                 #music-custom-lyrics.is-notice .lyrics-message {
-                    display: flex; align-items: center; justify-content: space-between;
-                    gap: 12px; text-align: left; font-size: 13px; color: #f5f5f5;
+                    display: grid; flex: 0 0 auto; grid-template-columns: minmax(0, 1fr) auto;
+                    align-items: center; gap: 8px 12px; text-align: left;
+                    font-size: 13px; line-height: 20px; color: rgba(255,255,255,.7);
                 }
-                #music-custom-lyrics.is-notice .lyrics-message div { flex: 1; min-width: 0; }
-                #music-custom-lyrics.is-notice .lyrics-message button { flex-shrink: 0; margin: 0; }
+                #music-custom-lyrics.is-notice .lyrics-message-text {
+                    display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere;
+                }
+                #music-custom-lyrics .lyrics-spinner {
+                    flex: 0 0 auto; width: 16px; height: 16px; box-sizing: border-box;
+                    border: 2px solid rgba(255,255,255,.2); border-top-color: rgba(255,255,255,.85);
+                    border-radius: 50%; animation: music-lyrics-spin .8s linear infinite;
+                }
+                @keyframes music-lyrics-spin { to { transform: rotate(360deg); } }
+                #music-custom-lyrics.is-notice .lyrics-message-actions {
+                    display: flex; align-items: center; gap: 4px;
+                }
+                #music-custom-lyrics.is-notice .lyrics-message-actions > button {
+                    display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center;
+                    height: 36px; min-height: 36px; margin: 0; padding: 0 12px;
+                    border: 0; border-radius: 18px; color: #f5f5f5;
+                    background: rgba(255,255,255,.12); font-family: inherit;
+                    font-size: 13px; font-weight: 500; line-height: 20px;
+                    -webkit-appearance: none; appearance: none; cursor: pointer;
+                }
+                #music-custom-lyrics.is-notice .lyrics-message-actions > button:hover { background: rgba(255,255,255,.2); }
+                #music-custom-lyrics.is-notice .lyrics-message-actions > button:disabled {
+                    opacity: .45; cursor: default;
+                }
+                #music-custom-lyrics.is-notice .lyrics-message-actions > .lyrics-info-button {
+                    width: 34px; min-width: 34px; height: 34px; min-height: 34px;
+                    padding: 0; border-radius: 50%;
+                    color: rgba(255,255,255,.78); background: transparent;
+                }
+                #music-custom-lyrics.is-notice .lyrics-info-button:hover,
+                #music-custom-lyrics.is-notice .lyrics-info-button[aria-expanded="true"] {
+                    color: #fff; background: rgba(255,255,255,.12);
+                }
+                #music-custom-lyrics.is-notice .lyrics-info-button svg {
+                    width: 18px; height: 18px; fill: none; stroke: currentColor;
+                    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+                }
+                #music-custom-lyrics.is-notice .lyrics-info-button:focus-visible {
+                    outline: 2px solid rgba(255,255,255,.78); outline-offset: 2px;
+                }
+                #music-custom-lyrics.is-notice .lyrics-message .lyrics-error-text {
+                    position: static; grid-column: 1 / -1; width: auto; max-width: 100%; box-sizing: border-box;
+                    margin: 0; padding: 9px 12px; border-radius: 6px;
+                    color: rgba(255,255,255,.78); background: rgba(255,255,255,.08);
+                    text-align: left;
+                    font-size: 12px; line-height: 1.4; overflow-wrap: anywhere;
+                }
                 #music-custom-lyrics .lyrics-source {
                     min-height: 19px; color: rgba(255,255,255,.65); font-size: 11px;
                     padding: 8px 0; text-align: center; letter-spacing: .01em;
                 }
                 @media (prefers-reduced-motion: reduce) {
+                    #music-custom-lyrics .lyrics-spinner { animation: none; }
                     #music-custom-lyrics .lyrics-line { transition: none; }
                     #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line { transform: none; }
                     #music-custom-lyrics .lyrics-scroll { scroll-behavior: auto !important; }
+                    #music-custom-lyrics .lyrics-line .lyrics-word { transition: none !important; text-shadow: none !important; filter: none !important; }
                 }
             `;
             document.documentElement.append(style);
 
             const cache = new Map();
-            const creditPattern = /^(?:作词|作詞|作曲|编曲|編曲|词|詞|曲|작사|작곡|편곡|composer|lyricist|arranger|producer|lyrics(?:\\s+by)?|music(?:\\s+by)?|words(?:\\s+by)?|written\\s+by|composed\\s+by|arranged\\s+by|produced\\s+by|penulis|pencipta)\\s*[:：]/iu;
+            const creditPattern = /^(?:作词|作詞|作曲|编曲|編曲|制作人|製作人|监制|監製|词|詞|曲|작사|작곡|편곡|composer|lyricist|arranger|producer|lyrics(?:\\s+by)?|music(?:\\s+by)?|words(?:\\s+by)?|written\\s+by|composed\\s+by|arranged\\s+by|produced\\s+by|penulis|pencipta)\\s*[:：]/iu;
             let overlay = null;
             let panel = null;
             let trackKey = '';
@@ -307,6 +461,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let activeLines = [];
             let activeIndex = -1;
             const savedOffsets = \(offsets);
+            const savedProviders = \(providers);
+            let currentResult = null;
             let offsetTrackKey = '';
             let offset = 0;
             let retryAfter = 0;
@@ -314,12 +470,24 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let frame = 0;
             let scrollFrame = 0;
             let scrollTarget = 0;
+            let contentAnimation = null;
             const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+            const graphemeSegmenter = new Intl.Segmenter(undefined, {granularity: 'grapheme'});
 
             function mediaElement() {
                 const media = [...document.querySelectorAll('video, audio')];
                 return media.find(item => !item.paused && !item.ended && Number.isFinite(item.duration))
                     || media.find(item => Number.isFinite(item.duration));
+            }
+
+            function playbackMode() {
+                const page = document.querySelector('ytmusic-player-page');
+                // shortcut: these YouTube player attributes are undocumented; revisit if its mode controls change.
+                if (page?.hasAttribute('video-mode')) return 'video';
+                const preference = page?.querySelector('ytmusic-av-toggle')?.getAttribute('playback-mode');
+                if (preference === 'ATV_PREFERRED') return 'song';
+                if (preference === 'OMV_PREFERRED') return 'video';
+                return null;
             }
 
             function trackInfo() {
@@ -330,28 +498,34 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const byline = bar?.querySelector('.byline, .subtitle');
                 const artist = metadata?.artist?.trim() || byline?.querySelector('a')?.textContent?.trim()
                     || byline?.textContent?.split(/[•·\\n]/)[0]?.trim();
+                const album = metadata?.album?.trim()
+                    || byline?.querySelector('a[href*="/browse/MPRE"]')?.textContent?.trim() || '';
                 const duration = mediaElement()?.duration;
                 if (!title || !artist || !Number.isFinite(duration) || duration < 1) return null;
                 const videoID = new URL(location.href).searchParams.get('v');
                 const artistLinks = byline?.querySelectorAll('a[href*="/channel/"], a[href*="/browse/UC"]') || [];
                 const artists = [...new Set([artist, ...[...artistLinks].map(link => link.textContent.trim()).filter(Boolean)])];
-                return {title, artist, artists, duration: Math.round(duration),
+                return {title, artist, artists, album, duration: Math.round(duration), playbackMode: playbackMode(),
                     videoID: location.pathname === '/watch' && /^[A-Za-z0-9_-]{1,128}$/.test(videoID || '') ? videoID : null};
             }
 
             function offsetIdentity(track) {
-                return track.videoID ? `video:${track.videoID}`
+                const identity = track.videoID ? `video:${track.videoID}`
                     : `track:${JSON.stringify([track.title.toLowerCase(), track.artist.toLowerCase(), track.duration])}`;
+                return track.playbackMode ? `mode:${track.playbackMode}|${identity}` : identity;
             }
 
             function setOffset(value) {
-                if (!offsetTrackKey) return;
-                offset = Math.max(-10_000, Math.min(10_000, value));
+                const track = trackInfo();
+                if (!Number.isFinite(value) || !offsetTrackKey || !track
+                    || !offsetTrackKey.startsWith(`${offsetIdentity(track)}|source:`)) return false;
+                offset = Math.round(Math.max(-3_600_000, Math.min(3_600_000, value)));
                 if (offset === 0) delete savedOffsets[offsetTrackKey];
                 else savedOffsets[offsetTrackKey] = offset;
                 overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
                 window.webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey: offsetTrackKey, milliseconds: offset});
                 updateActiveLine(true);
+                return true;
             }
 
             function lyricsTab() {
@@ -373,12 +547,12 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 element.setAttribute('aria-label', 'Synced Lyrics');
                 element.innerHTML = `
                     <div class="lyrics-toolbar">
-                        <button class="lyrics-settings-button" type="button" aria-label="Lyric settings" aria-expanded="false" title="Lyric settings">
+                        <button class="lyrics-settings-button" type="button" aria-label="Lyric settings" aria-expanded="false" aria-haspopup="dialog" aria-controls="music-lyrics-settings" title="Lyric settings">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.8 7.8 0 0 0 .05-.94 7.8 7.8 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.88 2h-3.76a.5.5 0 0 0-.5.42L9.26 4.96c-.59.23-1.14.55-1.63.94l-2.4-.96a.5.5 0 0 0-.6.22L2.7 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.8 7.8 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.12.21.37.3.61.22l2.39-.96c.49.39 1.04.71 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.76a.5.5 0 0 0 .5-.42l.36-2.54c.59-.23 1.14-.55 1.63-.94l2.4.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
                         </button>
-                        <div class="lyrics-settings-panel" role="dialog" aria-label="Lyric timing" hidden>
+                        <div class="lyrics-settings-panel" id="music-lyrics-settings" role="dialog" aria-label="Lyric settings" hidden>
                             <h2>Lyric timing</h2>
-                            <button type="button" class="lyrics-close-button" aria-label="Close lyric timing" title="Close">
+                            <button type="button" class="lyrics-close-button" aria-label="Close lyric settings" title="Close">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
                             </button>
                             <div class="lyrics-offset-controls">
@@ -391,18 +565,28 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                                 </button>
                             </div>
                             <div class="lyrics-offset-footer">
-                                <p class="lyrics-offset-note">Saved for this song</p>
-                                <button type="button" class="lyrics-reset-button" data-reset aria-label="Reset timing for this song">Reset</button>
+                                <p class="lyrics-offset-note"><span class="lyrics-offset-scope">Saved for this song</span><br><span class="lyrics-offset-source"></span></p>
+                                <button type="button" class="lyrics-reset-button" data-reset aria-label="Reset timing for this song, playback mode and lyric source">Reset</button>
+                            </div>
+                            <div class="lyrics-provider-section">
+                                <label class="lyrics-provider-label" for="music-lyrics-provider">Provider</label>
+                                <div class="lyrics-provider-control">
+                                    <select class="lyrics-provider-select" id="music-lyrics-provider" aria-describedby="music-lyrics-provider-note"></select>
+                                    <svg class="lyrics-provider-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                                </div>
+                                <p class="lyrics-provider-note" id="music-lyrics-provider-note" role="status"></p>
                             </div>
                         </div>
                     </div>
                     <div class="lyrics-scroll" tabindex="0" aria-label="Synced Lyrics"><div class="lyrics-lines" role="list"></div></div>
                     <div class="lyrics-message" role="status" hidden></div>
                     <footer class="lyrics-source">Synced Lyrics</footer>
+                    <span class="lyrics-feedback" role="status"></span>
                 `;
                 element.querySelector('.lyrics-settings-button').addEventListener('click', event => {
                     const button = event.currentTarget;
                     const settings = element.querySelector('.lyrics-settings-panel');
+                    settings.style.maxHeight = `${Math.max(0, element.clientHeight - 58)}px`;
                     settings.hidden = !settings.hidden;
                     button.setAttribute('aria-expanded', String(!settings.hidden));
                 });
@@ -421,6 +605,18 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     setOffset(offset + Number(button.dataset.offset));
                 }));
                 element.querySelector('[data-reset]').addEventListener('click', () => setOffset(0));
+                element.querySelector('.lyrics-provider-select').addEventListener('change', event => {
+                    const track = trackInfo();
+                    if (!track || !currentResult || !offsetTrackKey.startsWith(`${offsetIdentity(track)}|source:`)) return;
+                    const source = event.target.value;
+                    if (source && !currentResult.alternatives.some(result => result.source === source)) return;
+                    const identity = offsetIdentity(track);
+                    if (source) savedProviders[identity] = source;
+                    else delete savedProviders[identity];
+                    window.webkit.messageHandlers.musicLyricsProvider.postMessage({trackKey: identity, source});
+                    userScrollUntil = 0;
+                    displayLyrics(currentResult, track);
+                });
                 const scroll = element.querySelector('.lyrics-scroll');
                 for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
                     scroll.addEventListener(event, () => {
@@ -447,59 +643,163 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 return `${seconds > 0 ? '+' : ''}${seconds.toFixed(2)} s`;
             }
 
-            function showMessage(message, action) {
+            function cancelContentTransition() {
+                contentAnimation?.cancel();
+                contentAnimation = null;
+            }
+
+            function showMessage(message, action, details) {
                 if (!overlay) return;
+                cancelContentTransition();
                 cancelScroll();
+                stopWordSyncLoop();
                 activeLines = [];
                 activeIndex = -1;
                 panel?.classList.remove('music-custom-lyrics-active');
                 overlay.classList.add('is-notice');
                 const box = overlay.querySelector('.lyrics-message');
+                const restoreFocus = box.contains(document.activeElement);
+                const loading = !!loadingKey && loadingKey === trackKey && !completedKey;
                 const list = overlay.querySelector('.lyrics-scroll');
+                list.setAttribute('aria-busy', String(loading));
                 list.hidden = true;
                 overlay.querySelector('.lyrics-lines').replaceChildren();
                 box.replaceChildren();
                 const text = document.createElement('div');
+                text.className = 'lyrics-message-text';
                 text.textContent = message;
+                if (loading) {
+                    const spinner = document.createElement('span');
+                    spinner.className = 'lyrics-spinner';
+                    spinner.setAttribute('aria-hidden', 'true');
+                    text.prepend(spinner);
+                }
                 box.append(text);
-                if (action) {
-                    const button = document.createElement('button');
-                    button.type = 'button'; button.textContent = action.label;
-                    button.disabled = Date.now() < retryAfter;
-                    button.addEventListener('click', action.run);
-                    box.append(button);
-                    if (button.disabled) setTimeout(() => { button.disabled = Date.now() < retryAfter; }, retryAfter - Date.now() + 50);
+                if (action || details) {
+                    const actions = document.createElement('div');
+                    actions.className = 'lyrics-message-actions';
+                    if (details) {
+                        const info = document.createElement('button');
+                        info.type = 'button';
+                        info.className = 'lyrics-info-button';
+                        info.setAttribute('aria-label', 'Show error details');
+                        info.setAttribute('aria-controls', 'music-custom-lyrics-error-details');
+                        info.setAttribute('aria-expanded', 'false');
+                        info.title = 'Show error details';
+                        info.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.75h.01"/></svg>';
+                        const detailText = document.createElement('div');
+                        detailText.id = 'music-custom-lyrics-error-details';
+                        detailText.className = 'lyrics-error-text';
+                        detailText.hidden = true;
+                        detailText.textContent = details;
+                        info.addEventListener('click', () => {
+                            const expanded = detailText.hidden;
+                            detailText.hidden = !expanded;
+                            info.setAttribute('aria-expanded', String(expanded));
+                            info.setAttribute('aria-label', expanded ? 'Hide error details' : 'Show error details');
+                            info.title = expanded ? 'Hide error details' : 'Show error details';
+                        });
+                        actions.append(info);
+                        box.append(actions, detailText);
+                    }
+                    if (action) {
+                        const button = document.createElement('button');
+                        button.type = 'button'; button.textContent = action.label;
+                        button.disabled = Date.now() < retryAfter;
+                        button.addEventListener('click', action.run);
+                        actions.append(button);
+                        if (button.disabled) setTimeout(() => { button.disabled = Date.now() < retryAfter; }, retryAfter - Date.now() + 50);
+                    }
+                    if (!details) box.append(actions);
                 }
                 box.hidden = false;
+                if (restoreFocus) {
+                    box.tabIndex = -1;
+                    box.focus({preventScroll: true});
+                }
             }
 
             function parseLRC(value) {
-                const result = [];
+                const lines = [];
                 for (const raw of value.split(/\\r?\\n/)) {
                     const times = [...raw.matchAll(/\\[(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?\\]/g)];
                     const text = raw.replace(/\\[[^\\]]+\\]/g, '').trim();
                     if (!text || !times.length) continue;
                     for (const match of times) {
                         const fraction = match[3] ? Number(`0.${match[3]}`) : 0;
-                        result.push({time: (Number(match[1]) * 60 + Number(match[2]) + fraction) * 1000, text});
+                        lines.push({time: (Number(match[1]) * 60 + Number(match[2]) + fraction) * 1000, text});
                     }
                 }
-                return result.sort((a, b) => a.time - b.time);
+                lines.sort((a, b) => a.time - b.time);
+                return lines.map(line => ({time: line.time, text: line.text, words: []}));
+            }
+
+            function parseYRC(value) {
+                const lines = [];
+                for (const raw of value.split(/\\r?\\n/)) {
+                    const trimmed = raw.trim();
+                    if (!trimmed) continue;
+                    if (trimmed.startsWith('{')) {
+                        try {
+                            const creditObj = JSON.parse(trimmed);
+                            const text = (creditObj.c || []).map(item => item.tx || '').join('').trim();
+                            if (text) lines.push({time: creditObj.t ?? 0, text, words: [], credit: true});
+                        } catch (_) {}
+                        continue;
+                    }
+                    const lineMatch = trimmed.match(/^\\[(\\d+),(\\d+)\\](.*)$/);
+                    if (!lineMatch) continue;
+                    const lineStart = Number(lineMatch[1]);
+                    const lineDuration = Number(lineMatch[2]);
+                    const rest = lineMatch[3];
+
+                    const words = [];
+                    const tokenRegex = /\\((\\d+),(\\d+),\\d+\\)([^(]*)/g;
+                    let tokenMatch;
+                    let fullText = '';
+                    while ((tokenMatch = tokenRegex.exec(rest)) !== null) {
+                        const wordStart = Number(tokenMatch[1]);
+                        const wordDur = Number(tokenMatch[2]);
+                        const wordText = tokenMatch[3];
+                        fullText += wordText;
+                        words.push({
+                            word: wordText,
+                            start_time: wordStart,
+                            end_time: wordStart + wordDur
+                        });
+                    }
+                    const text = fullText.trim();
+                    if (text) {
+                        lines.push({
+                            time: lineStart,
+                            duration: lineDuration,
+                            text,
+                            words,
+                            credit: false
+                        });
+                    }
+                }
+                lines.sort((a, b) => a.time - b.time);
+                return lines;
             }
 
             function renderLines(lines, source) {
                 cancelScroll();
+                stopWordSyncLoop();
                 activeLines = lines;
                 activeIndex = -1;
                 overlay.classList.remove('is-notice');
                 if (!overlay.hidden && lyricsTab()) panel.classList.add('music-custom-lyrics-active');
                 const synchronized = lines.some(line => line.time != null);
                 overlay.querySelector('.lyrics-toolbar').hidden = !synchronized;
-                overlay.querySelector('.lyrics-source').textContent = synchronized
-                    ? `Lyrics from ${source}` : `Lyrics from ${source} · Unsynchronized`;
+                const timing = lines.some(line => line.words?.length > 0)
+                    ? 'Word-by-word' : synchronized ? 'Line-by-line' : 'No timing';
+                overlay.querySelector('.lyrics-source').textContent = `Lyrics from ${source} · ${timing}`;
                 const list = overlay.querySelector('.lyrics-lines');
                 const scroll = overlay.querySelector('.lyrics-scroll');
+                scroll.setAttribute('aria-busy', 'false');
                 const message = overlay.querySelector('.lyrics-message');
+                const restoreFocus = message.contains(document.activeElement);
                 list.replaceChildren();
                 list.classList.toggle('is-plain', !synchronized);
                 list.style.paddingBlock = '';
@@ -514,7 +814,6 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         const button = document.createElement('button');
                         button.type = 'button';
                         button.className = 'lyrics-seek';
-                        button.textContent = line.text;
                         button.title = 'Jump to this line';
                         button.addEventListener('click', () => {
                             const media = mediaElement();
@@ -529,7 +828,52 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                                 overlay.querySelector('.lyrics-source').textContent = 'Playback is not ready to seek. Try again.';
                             }
                         });
-                        row.append(button);
+                        if (line.words && line.words.length > 0) {
+                            for (const word of line.words) {
+                                const segments = Array.from(graphemeSegmenter.segment(word.word), item => item.segment);
+                                let first = 0;
+                                while (first < segments.length && segments[first].trim() === '') {
+                                    button.append(document.createTextNode(segments[first++]));
+                                }
+                                let last = segments.length;
+                                while (last > first && segments[last - 1].trim() === '') last--;
+                                const wordSpan = document.createElement('span');
+                                wordSpan.className = 'lyrics-word';
+                                for (const segment of segments.slice(first, last)) {
+                                    if (segment.trim() === '') {
+                                        wordSpan.append(document.createTextNode(segment));
+                                    } else {
+                                        const letter = document.createElement('span');
+                                        letter.className = 'lyrics-letter';
+                                        letter.textContent = segment;
+                                        wordSpan.append(letter);
+                                    }
+                                }
+                                wordSpan.dataset.start = String(word.start_time);
+                                wordSpan.dataset.end = String(word.end_time);
+                                button.append(wordSpan);
+                                for (const segment of segments.slice(last)) {
+                                    button.append(document.createTextNode(segment));
+                                }
+                            }
+                        } else {
+                            button.textContent = line.text;
+                        }
+                        const align = document.createElement('button');
+                        align.type = 'button';
+                        align.className = 'lyrics-align';
+                        align.title = 'Sync this line to now';
+                        align.setAttribute('aria-label', `Sync this line to now: ${line.text}`);
+                        align.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.34 6.34A8 8 0 0 1 20 12M20 7v5h-5M17.66 17.66A8 8 0 0 1 4 12M4 17v-5h5"/></svg>';
+                        align.addEventListener('click', () => {
+                            const media = mediaElement();
+                            if (!media || !Number.isFinite(media.currentTime) || media.currentTime < 0 || media.currentTime > media.duration) return;
+                            if (!setOffset(media.currentTime * 1000 - line.time)) return;
+                            userScrollUntil = 0;
+                            updateActiveLine(true);
+                            overlay.querySelector('.lyrics-feedback').textContent = `Lyrics aligned to this line. Timing ${formatOffset(offset)}.`;
+                        });
+                        row.append(button, align);
                     } else {
                         row.textContent = line.text;
                     }
@@ -537,7 +881,9 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 // Reset after the scroller is visible; writes while hidden cannot clear its saved position.
                 scroll.scrollTo({top: 0, behavior: 'instant'});
-                updateActiveLine(true);
+                updateActiveLine(true, true);
+                if (restoreFocus) scroll.focus({preventScroll: true});
+                startWordSyncLoop();
             }
 
             function cancelScroll() {
@@ -545,26 +891,74 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 scrollFrame = 0;
             }
 
-            function scrollToPosition(scroll, target) {
+            function scrollToPosition(scroll, target, immediate = false) {
                 target = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, target));
-                if (scrollFrame && Math.abs(target - scrollTarget) < 1 && !reducedMotion.matches) return;
+                if (scrollFrame && Math.abs(target - scrollTarget) < 1 && !reducedMotion.matches && !immediate) return;
                 cancelScroll();
                 scrollTarget = target;
                 const start = scroll.scrollTop;
-                if (reducedMotion.matches || Math.abs(target - start) < 1) {
+                if (immediate || reducedMotion.matches || Math.abs(target - start) < 1) {
                     scroll.scrollTop = target;
                     return;
                 }
                 const started = performance.now();
                 function step(now) {
-                    const progress = reducedMotion.matches ? 1 : Math.min(1, Math.max(0, (now - started) / 650));
+                    const progress = reducedMotion.matches ? 1 : Math.min(1, Math.max(0, (now - started) / 420));
                     scroll.scrollTop = start + (target - start) * (1 - (1 - progress) ** 3);
                     scrollFrame = progress < 1 ? requestAnimationFrame(step) : 0;
                 }
                 scrollFrame = requestAnimationFrame(step);
             }
 
-            function updateActiveLine(forceScroll = false) {
+            function updateActiveWords(time) {
+                if (activeIndex < 0 || !activeLines[activeIndex]) return;
+                const line = activeLines[activeIndex];
+                if (!line.words || !line.words.length) return;
+                const rows = overlay?.querySelectorAll('.lyrics-line');
+                const row = rows?.[activeIndex];
+                if (!row) return;
+                const wordSpans = row.querySelectorAll('.lyrics-word');
+                if (!wordSpans.length) return;
+
+                for (let i = 0; i < line.words.length; i++) {
+                    const w = line.words[i];
+                    const span = wordSpans[i];
+                    if (!span) continue;
+                    const letters = span.querySelectorAll('.lyrics-letter');
+                    const completed = span.classList.contains('is-sung') && !span.classList.contains('is-current');
+                    if (time >= w.end_time || (completed && time >= w.end_time - 80)) {
+                        if (!completed) {
+                            letters.forEach(letter => {
+                                if (letter.style.getPropertyValue('--word-progress') !== '100%') {
+                                    letter.style.setProperty('--word-progress', '100%');
+                                }
+                            });
+                            span.classList.add('is-sung');
+                            span.classList.remove('is-current');
+                        }
+                    } else if (time >= w.start_time && time < w.end_time) {
+                        const progress = Math.max(0, Math.min(1, (time - w.start_time) / (w.end_time - w.start_time)));
+                        const letterProgress = progress * letters.length;
+                        letters.forEach((letter, index) => {
+                            const fill = Math.max(0, Math.min(1, letterProgress - index));
+                            const value = `${fill * 100}%`;
+                            if (letter.style.getPropertyValue('--word-progress') !== value) {
+                                letter.style.setProperty('--word-progress', value);
+                            }
+                        });
+                        span.classList.add('is-sung', 'is-current');
+                    } else {
+                        letters.forEach(letter => {
+                            if (letter.style.getPropertyValue('--word-progress') !== '0%') {
+                                letter.style.setProperty('--word-progress', '0%');
+                            }
+                        });
+                        span.classList.remove('is-sung', 'is-current');
+                    }
+                }
+            }
+
+            function updateActiveLine(forceScroll = false, immediate = false) {
                 if (!overlay || overlay.hidden || !activeLines.length) return;
                 if (activeLines.every(line => line.time == null)) return;
                 const current = mediaElement()?.currentTime;
@@ -576,16 +970,34 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (activeLines[index].time == null || activeLines[index].time <= time) next = index;
                     else break;
                 }
-                if (next === activeIndex && !forceScroll) return;
+                if (next === activeIndex && !forceScroll) {
+                    updateActiveWords(time);
+                    return;
+                }
                 activeIndex = next;
                 const rows = overlay.querySelectorAll('.lyrics-line');
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 const list = overlay.querySelector('.lyrics-lines');
                 rows.forEach((row, index) => {
-                    row.classList.toggle('is-current', index === activeIndex);
-                    if (index === activeIndex) row.setAttribute('aria-current', 'true');
-                    else row.removeAttribute('aria-current');
+                    const isCurrent = index === activeIndex;
+                    row.classList.toggle('is-current', isCurrent);
+                    if (isCurrent) {
+                        row.setAttribute('aria-current', 'true');
+                    } else {
+                        row.removeAttribute('aria-current');
+                        if (index < activeIndex) {
+                            row.querySelectorAll('.lyrics-word').forEach(s => {
+                                s.classList.add('is-sung');
+                                s.classList.remove('is-current');
+                            });
+                        } else {
+                            row.querySelectorAll('.lyrics-word').forEach(s => {
+                                s.classList.remove('is-sung', 'is-current');
+                            });
+                        }
+                    }
                 });
+                updateActiveWords(time);
                 list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - rows[0].offsetHeight) / 2)}px`;
                 list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - rows[rows.length - 1].offsetHeight) / 2)}px`;
                 if (activeIndex < 0) {
@@ -594,9 +1006,35 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     return;
                 }
                 if (forceScroll || Date.now() > userScrollUntil) {
-                    const bounds = rows[activeIndex].getBoundingClientRect();
-                    scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2
-                        - scroll.getBoundingClientRect().top - scroll.clientHeight / 2);
+                    const row = rows[activeIndex];
+                    const bounds = row.getBoundingClientRect();
+                    const verticalTransform = new DOMMatrix(getComputedStyle(row).transform).m42;
+                    scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2 - verticalTransform
+                        - scroll.getBoundingClientRect().top - scroll.clientHeight / 2, immediate);
+                }
+            }
+
+            let wordFrame = 0;
+            function startWordSyncLoop() {
+                if (wordFrame || lifetime.signal.aborted) return;
+                const hasWords = activeLines.some(l => l.words && l.words.length > 0);
+                if (!hasWords) return;
+                function step() {
+                    wordFrame = 0;
+                    if (lifetime.signal.aborted) return;
+                    const media = mediaElement();
+                    if (media && !media.paused && !media.ended) {
+                        updateActiveLine();
+                        wordFrame = requestAnimationFrame(step);
+                    }
+                }
+                wordFrame = requestAnimationFrame(step);
+            }
+
+            function stopWordSyncLoop() {
+                if (wordFrame) {
+                    cancelAnimationFrame(wordFrame);
+                    wordFrame = 0;
                 }
             }
 
@@ -606,7 +1044,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
 
             function readLyrics(record, synchronized = true, artists = []) {
                 if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('invalid-response');
-                const synced = typeof record.syncedLyrics === 'string' ? parseLRC(record.syncedLyrics) : [];
+                let yrcLines = [];
+                if (typeof record.yrcLyrics === 'string' && record.yrcLyrics.trim()) {
+                    try { yrcLines = parseYRC(record.yrcLyrics); } catch (_) {}
+                }
+                const lyricsFileLines = Array.isArray(record.lyricsFileLines) ? record.lyricsFileLines : [];
+                const synced = lyricsFileLines.length ? lyricsFileLines : yrcLines.length ? yrcLines
+                    : (typeof record.syncedLyrics === 'string' ? parseLRC(record.syncedLyrics) : []);
                 const plain = typeof record.plainLyrics === 'string'
                     ? record.plainLyrics.split(/\\r?\\n/).map(text => ({time: null, text: text.trim()})).filter(line => line.text)
                     : [];
@@ -619,7 +1063,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         const text = line.text.normalize('NFKC');
                         const performer = text.match(/^\\(([^()]+)\\)$/u)?.[1];
                         // Match declared artists only; parenthesized words may be sung vocals.
-                        return {...line, credit: creditPattern.test(text)
+                        return {...line, credit: line.credit || creditPattern.test(text)
                             || (performer != null && performerNames.has(normalizeName(performer)))};
                     })};
             }
@@ -631,9 +1075,50 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 retryAfter = Date.now() + Math.max(0, reply.retryAfter || 0) * 1000;
                 if (reply.status === 'unavailable') throw new Error(reply.message);
                 const result = reply.record ? {...readLyrics(reply.record, reply.record.synchronized, track.artists), source: reply.record.source} : null;
+                if (result) {
+                    result.alternatives = (reply.alternatives || [reply.record]).map(record => ({
+                        ...readLyrics(record, record.synchronized, track.artists), source: record.source
+                    })).filter(result => result.lines.some(line => Number.isFinite(line.time) && !line.credit));
+                    if (!result.lines.some(line => Number.isFinite(line.time) && !line.credit)) {
+                        const fallback = result.alternatives.find(item => item.lines.some(line => line.words?.length && !line.credit))
+                            || result.alternatives[0];
+                        if (fallback) Object.assign(result, fallback);
+                    }
+                }
                 cache.set(key, result);
                 if (cache.size > 30) cache.delete(cache.keys().next().value);
                 return result;
+            }
+
+            function displayLyrics(result, track) {
+                const identity = offsetIdentity(track);
+                const preferred = savedProviders[identity] || '';
+                const selected = result.alternatives.find(item => item.source === preferred) || result;
+                const select = overlay.querySelector('.lyrics-provider-select');
+                select.replaceChildren(new Option(`Automatic · ${result.source}`, ''));
+                for (const item of result.alternatives) {
+                    const timing = item.lines.some(line => line.words?.length) ? 'Word-by-word' : 'Line-by-line';
+                    select.add(new Option(`${item.source} · ${timing}`, item.source));
+                }
+                const unavailable = preferred && selected.source !== preferred;
+                if (unavailable) {
+                    const option = new Option(`${preferred} · Unavailable`, preferred);
+                    option.disabled = true;
+                    select.add(option);
+                }
+                select.value = preferred;
+                overlay.querySelector('.lyrics-provider-note').textContent = unavailable
+                    ? `${preferred} is unavailable. Showing ${selected.source} for now.`
+                    : preferred ? 'Saved for this song.'
+                    : result.alternatives.length > 1 ? 'Best available match.'
+                    : 'No other providers matched.';
+                offsetTrackKey = `${identity}|source:${selected.source}`;
+                offset = savedOffsets[offsetTrackKey] ?? 0;
+                overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
+                overlay.querySelector('.lyrics-offset-source').textContent = selected.source;
+                overlay.querySelector('.lyrics-offset-scope').textContent = track.playbackMode
+                    ? `Saved for ${track.playbackMode === 'video' ? 'Video' : 'Song'} mode` : 'Saved for this song';
+                renderLines(selected.lines, selected.source);
             }
 
             async function loadTrack(force = false) {
@@ -645,12 +1130,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     completedKey = '';
                     offsetTrackKey = '';
                     offset = 0;
+                    currentResult = null;
                     activeLines = [];
                     showMessage('Waiting for track information…');
                     return;
                 }
                 const identity = offsetIdentity(track);
-                const key = `${identity}|${track.title.toLocaleLowerCase()}|${track.artist.toLocaleLowerCase()}|${track.duration}|${JSON.stringify(track.artists)}`;
+                const key = `${identity}|${track.title.toLocaleLowerCase()}|${track.artist.toLocaleLowerCase()}|${track.duration}|${JSON.stringify([track.album.toLocaleLowerCase(), track.artists])}`;
                 if (force) cache.delete(key);
                 if (!force && key === trackKey && (activeLines.length || loadingKey === key || completedKey === key)) return;
                 if (key !== trackKey) {
@@ -658,16 +1144,18 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     closeSettings();
                     userScrollUntil = 0;
                     trackKey = key;
-                    offsetTrackKey = identity;
-                    offset = savedOffsets[identity] ?? 0;
-                    overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
                     completedKey = '';
                     activeLines = [];
                     activeIndex = -1;
                 }
                 loadingKey = key;
                 completedKey = '';
-                showMessage('Looking for lyrics…');
+                offsetTrackKey = '';
+                offset = 0;
+                currentResult = null;
+                overlay.querySelector('.lyrics-settings-panel output').textContent = formatOffset(offset);
+                overlay.querySelector('.lyrics-offset-source').textContent = '';
+                showMessage('Looking for synced lyrics…');
                 try {
                     const result = await fetchLyrics(track, key);
                     if (lifetime.signal.aborted || trackKey !== key || !overlay) return;
@@ -681,18 +1169,31 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         showMessage('This track is listed as instrumental.', retry);
                         return;
                     }
-                    if (!result.lines.length) {
-                        showMessage('No readable lyrics.', retry);
+                    if (!result.lines.some(line => Number.isFinite(line.time) && !line.credit)) {
+                        showMessage('No synced lyrics for this song.', retry);
                         return;
                     }
-                    renderLines(result.lines, result.source);
+                    if (!reducedMotion.matches && !document.hidden && !overlay.hidden && lyricsTab()) {
+                        contentAnimation = panel.animate([{opacity: 1}, {opacity: 0}], {
+                            duration: 100, easing: 'ease-out', fill: 'forwards'
+                        });
+                        await contentAnimation.finished.catch(() => {});
+                        if (lifetime.signal.aborted || trackKey !== key) return;
+                    }
+                    currentResult = result;
+                    displayLyrics(result, track);
+                    cancelContentTransition();
+                    if (!reducedMotion.matches && !document.hidden && !overlay.hidden && lyricsTab()) {
+                        contentAnimation = panel.animate([{opacity: 0}, {opacity: 1}], {
+                            duration: 240, easing: 'cubic-bezier(.16,1,.3,1)'
+                        });
+                    }
                 } catch (error) {
                     if (lifetime.signal.aborted || trackKey !== key) return;
                     completedKey = key;
-                    const message = error.message || 'Couldn’t load lyrics.';
-                    showMessage(message, {
+                    showMessage('Couldn’t load synced lyrics.', {
                         label: 'Try Again', run: () => loadTrack(true)
-                    });
+                    }, error?.message || 'No additional provider details.');
                 } finally {
                     if (loadingKey === key) loadingKey = '';
                 }
@@ -705,6 +1206,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     const nextPanel = panelElement();
                     const active = !!nextPanel && lyricsTab();
                     if (!active) {
+                        cancelContentTransition();
                         cancelScroll();
                         if (panel) panel.classList.remove('music-custom-lyrics-active');
                         if (overlay) overlay.hidden = true;
@@ -720,11 +1222,14 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     overlay.hidden = false;
                     loadTrack();
                     panel.classList.toggle('music-custom-lyrics-active', activeLines.length > 0);
-                    updateActiveLine(returning);
+                    updateActiveLine(returning, returning);
                 });
             }
 
-            const resizeObserver = new ResizeObserver(() => updateActiveLine(true));
+            const resizeObserver = new ResizeObserver(() => {
+                if (overlay) overlay.querySelector('.lyrics-settings-panel').style.maxHeight = `${Math.max(0, overlay.clientHeight - 58)}px`;
+                updateActiveLine(true);
+            });
             const observer = new MutationObserver(records => {
                 const relevant = records.some(record => {
                     if (overlay && (record.target === overlay || overlay.contains(record.target))) return false;
@@ -740,7 +1245,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             });
             observer.observe(document.documentElement, {
                 subtree: true, childList: true, characterData: true, attributes: true,
-                attributeFilter: ['aria-selected', 'selected', 'class', 'hidden', 'href']
+                attributeFilter: ['aria-selected', 'selected', 'class', 'hidden', 'href', 'playback-mode', 'video-mode']
             });
             for (const event of ['play', 'loadedmetadata', 'durationchange', 'emptied']) {
                 document.addEventListener(event, schedule, {capture: true, signal: lifetime.signal});
@@ -748,9 +1253,15 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             for (const event of ['timeupdate', 'seeking', 'seeked']) {
                 document.addEventListener(event, () => updateActiveLine(), {capture: true, signal: lifetime.signal});
             }
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) cancelContentTransition();
+                else schedule();
+            }, {signal: lifetime.signal});
             window.musicCustomLyrics = {stop() {
+                stopWordSyncLoop();
                 cancelLookup();
                 cancelScroll();
+                cancelContentTransition();
                 lifetime.abort();
                 observer.disconnect();
                 resizeObserver.disconnect();

@@ -300,6 +300,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     str(root / 'Music/MusicExtensions.swift'),
                     str(root / 'Music/MusicScripts.swift'),
                     str(root / 'Music/MusicLyrics.swift'), str(root / 'Music/MusicLyricsProvider.swift'),
+                    str(root / 'Music/MusicTTML.swift'),
                     str(root / 'Music/MusicMenuSymbol.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))

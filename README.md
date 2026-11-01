@@ -41,13 +41,11 @@ Enjoying Music? Give it a **Star** on GitHub to help others discover it.
 - **Custom app icons:** Personalize Music with your own Light and Dark icons. Your choices stay saved across updates.
 - **Extensions:** Use your favorite compatible Safari Web Extensions from the App Store in Music.
 - **Custom scripts:** Import local JavaScript in Settings → Scripts. New scripts start disabled. Enable a script and click Apply Scripts to reload YouTube Music while Settings stays open.
-- **Synced Lyrics (Beta):** Lyrics follow your music, with the current line highlighted and kept centered. Click a timed line to jump to that part of the song. The feature is on by default and can be turned off in **Settings → Lyrics**. When synced lyrics aren’t available, plain lyrics are shown when possible. See [lyric sources, timing adjustments, and attribution](#lyrics-sources-and-attribution).
+- **Synced Lyrics (Beta):** Follow along with lyrics that scroll automatically as the song plays. Word-by-word highlighting is available for supported songs. Click a line to jump to that part of the song, or hover over a line and click its sync button when the vocals begin to align the lyrics. The gear lets you adjust timing or choose another matching provider, remembered for that song. Enabled by default; manage it in **Settings → Lyrics**.
 - **macOS Now Playing:** Play, pause, and change tracks from the system's playback controls.
 <p>
   <img src="docs/screenshots/now-playing.png" alt="macOS Now Playing controls with album artwork, playback controls, and track progress" width="65%">
 </p>
-
-Native app communication used by some Safari extensions is unavailable in Music. Refresh List checks installed extensions; Apply Extensions reloads the page to apply your choices and keeps Settings open.
 
 ## Custom scripts
 
@@ -57,15 +55,60 @@ Scripts must be standalone UTF-8 `.js` files up to 1 MB. They run after the docu
 
 ## Lyrics sources and attribution
 
-Music’s native provider request flow is adapted from [syncedlyrics](https://github.com/moehmeni/syncedlyrics), copyright © 2022 Momo, under the MIT license. The upstream revision, modifications, and full MIT notice are included in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), which is also bundled with the app. Music does not bundle Python or contact a server operated by syncedlyrics. The provider adapters run in Swift and contact [NetEase Cloud Music](https://music.163.com/) and [LRCLIB](https://lrclib.net/) directly. Changes to those services may still require updates to Music.
+### How the five sources are compared
 
-These services supply the responses; they are not credited as the owners of every song’s lyrics. Lyrics remain subject to their songwriters’, publishers’, and other rights holders’ rights. Music’s GPL license and syncedlyrics’ MIT license cover software, not the lyrics catalog, and do not replace applicable provider terms or permissions. Music is not affiliated with or endorsed by these providers or YouTube. This integration is not a claim of authorization to redistribute their catalogs.
+NetEase, LRCLIB, AMLL, Better Lyrics, and lrcmux are peer sources. Each fresh lookup checks all available sources, including after an earlier source supplies word timing. A source in a server-requested cooldown is temporarily skipped. A local cache hit reuses the matching results; Try Again requests a fresh lookup. In Automatic mode, valid word/syllable timing wins over line timing; ties retain the first valid result. The Lyrics gear lists the matching timed providers and lets you switch immediately without another request. A manual choice is remembered locally for the current song and playback mode; choose Automatic to clear it. If the saved provider is unavailable, the best available result is shown temporarily and the gear explains the fallback. Untimed responses, metadata-only NetEase credit records, and results without readable timed vocals leave the original YouTube Music panel visible.
 
-Synced Lyrics is on by default. You can turn it off in Settings → Lyrics, and Music remembers your choice. When timing is available, lyrics follow playback: the current line stays centered and appears larger. Scrolling slows gently as it reaches the active line, and manual scrolling immediately interrupts the animation. Text stays sharp, with a fade at the top and bottom edges of the scrolling area. Space above the first line and below the last lets both remain centered. New tracks reset the scrolling position. Reduced Motion disables transitions and smooth scrolling. Click a timed lyric line to seek to it, or focus the line and press Return or Space; timing adjustments are included when seeking. Close timing settings by clicking outside or pressing Escape. Untimed lyrics remain clear, readable text because they have no reliable seek positions.
+Hover over a timed line, or focus it with the keyboard, to reveal its sync button on the right. Click when that line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
 
-Timing offsets are saved automatically on this Mac for each YouTube video. When a video ID is unavailable, Music uses the title, artist, and duration to identify the track. Only nonzero adjustments are stored; setting the offset to zero or choosing Reset removes that entry. Offsets shift lyric timestamps; they do not change audio speed or correct a cover with a different tempo.
+| Source | API used by Music | Data used for matching and display |
+| --- | --- | --- |
+| [NetEase Cloud Music](https://music.163.com/) | `music.163.com/api/cloudsearch/pc` and `/api/song/lyric/v1` | Matching titles, artists and nearby catalog durations; LRC line timing or YRC word timing. These are undocumented service endpoints and can reject anonymous requests. |
+| [LRCLIB](https://lrclib.net/docs) | `lrclib.net/api/search` | Matching title, artist and catalog duration; LRC and Lyricsfile word timing when supplied. Public lookup does not require a key. |
+| [AMLL TTML DB](https://github.com/amll-dev/amll-ttml-db) | `api.amll.dev/v1/lyrics/search` and `/v1/lyrics/get` | Community TTML. Timing requires a NetEase catalog ID associated with audio within two seconds of the current duration, even if NetEase's lyric endpoint fails. Title/artist-only matches do not replace native lyrics. |
+| [Better Lyrics](https://docs.betterlyrics.org/) | `api.betterlyrics.org/getLyrics` | Title, artist, album when available, and rounded audio duration are sent to its matching/cache endpoint. The returned TTML is parsed locally. The response does not always include independent track metadata; matching relies on the service's response to that request. |
+| [lrcmux](https://lrcmux.dev/docs) | `api.lrcmux.dev/get` | Requests word timing with JSON output, allowing line timing when word timing is unavailable. Returned title, artist and duration must match; word text, ordering and millisecond ranges are validated locally. |
 
-Music does not host a lyrics catalog, bundle song lyrics with the app, or save fetched lyrics to disk. It first tries NetEase, then LRCLIB if necessary, preferring synchronized lyrics over plain text. It accepts matching titles and artists with nearby durations; differing versions may only have unsynchronized text. If both providers fail or have no suitable match, the original YouTube Music panel remains available. Availability, timing, and coverage vary by song and region.
+NetEase, LRCLIB and lrcmux synchronization uses a two-second catalog-duration tolerance. Word arrays that do not reproduce the line text or contain invalid times are not used as word timing. A TTML document's final timestamp or `body dur` is not proof of the recording's audio duration. Album changes invalidate lyric lookups so a stale Better Lyrics cache match is not reused. Covers, music videos with long intros, live recordings, edits and remasters may still have different arrangements or offsets. Matching and timing are not guaranteed for every song or region.
+
+### Public access, rate limits and failures
+
+Music uses anonymous, read-only access with an identifying `User-Agent`; it includes no provider API keys or account credentials. It does not use private extension keys, authenticated refresh/admin endpoints, or bulk catalog downloads.
+
+- **Better Lyrics:** its [public TTML access](https://docs.betterlyrics.org/docs/authentication) serves cached queries without a key. An uncached request can return `401`; Music treats that as an unavailable public match for that song, not a request to sign in or disable other cached songs. The operator does not issue the extension's key to other projects. Album and duration affect the cache key, so missing or different metadata can miss an existing entry. [Rate limits](https://docs.betterlyrics.org/docs/rate-limiting) vary by IP/tier and can change.
+- **lrcmux:** its [public API documentation](https://lrcmux.dev/docs) currently lists 60 requests per minute, burst 10, with cache hits excluded. Music spaces lrcmux requests at least one second apart and honors `Retry-After`. Limits can change, and other clients sharing an IP may consume the same quota.
+- **AMLL:** its [API overview](https://amll.dev/en/reference/http-api/overview.html) currently documents an average limit of 50 requests/second/IP. Music only uses its public lyric search/get endpoints.
+- Each source has its own request deadline and cooldown: up to ten seconds for NetEase/LRCLIB and six seconds for each other source. Lookups currently visit sources in sequence, so timeouts can add up; native YouTube lyrics remain available while loading. `429`/`503` responses honor `Retry-After`, with bounded retries for temporary `503` responses. A failure from one source does not discard valid lyrics from another. `502` indicates a gateway/upstream failure and is not proof that a song has no lyrics.
+
+These services are independent of Music. Availability, catalogs, access rules and response formats can change or stop working. The public endpoints are not a service-availability guarantee. Turn the feature off in Settings → Lyrics to stop these lookups.
+
+### Software licenses, content rights and attribution
+
+Music's NetEase/LRCLIB request flow is adapted from [syncedlyrics](https://github.com/moehmeni/syncedlyrics), copyright © 2022 Momo, under MIT. The exact upstream revision, modifications and full MIT notice are in the bundled [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). The AMLL, Better Lyrics and lrcmux adapters and the native TTML parser are independently written. Music does not bundle Python, contact a syncedlyrics-operated server, or include the providers' server code or client libraries.
+
+| Upstream project/service | Software/data license distinction |
+| --- | --- |
+| NetEase Cloud Music | Access and content remain subject to the provider's applicable terms and rights holders' permissions; Music does not relicense its service or catalog. |
+| LRCLIB | The published [server software is MIT](https://github.com/tranxuanthang/lrclib/blob/main/LICENSE). That software license is not a blanket license to every lyric in its database. |
+| AMLL | The [API server is MIT or Apache-2.0](https://github.com/amll-dev/amll-ttml-api#许可). [AMLL TTML DB](https://github.com/amll-dev/amll-ttml-db#共享协议) applies CC0-1.0 to contributor-authored material and the original provider's terms to external data. Underlying song/lyric rights remain separate. Its AGPL libraries and server are not bundled. |
+| Better Lyrics | Its [server code is GPLv3](https://github.com/better-lyrics/api/blob/master/LICENSE). Music calls the public HTTP API and does not redistribute that server. [Its catalog can involve lrc.red and other upstream providers](https://github.com/better-lyrics/api#data-sources); GPLv3 is not a license to their lyric content. |
+| lrcmux | Its [server code is MIT](https://github.com/f1nniboy/lrcmux/blob/main/LICENSE). Music calls its public API without bundling the server. Its aggregated lyric responses remain subject to the originating sources' terms and rights. |
+
+The footer identifies the service that returned the selected result, such as `Lyrics from Better Lyrics` or `Lyrics from lrcmux (KuGou)`. Music names an underlying provider only when explicit response metadata identifies it. AMLL platform IDs identify associated recordings, not the original lyric supplier; the TTML format alone does not establish Apple Music provenance. Source names do not imply ownership, partnership or endorsement. Links here and in the bundled notices acknowledge the services and their contributors; no provider name is required in Music's README title.
+
+Music's GPLv3 license and the other software licenses cover code, not a blanket right to song lyrics, translations, artwork or catalogs. Those rights remain with songwriters, publishers and other rights holders. Public API access, successful requests and attribution do not replace any required content permissions or applicable service terms. Music does not host, bundle, export or mirror a lyric catalog, and fetched lyrics are not written to disk. This integration and these notices are not a claim that every upstream record is authorized for every use. Distributors and operators remain responsible for permissions required for their use; adding a credit alone does not resolve missing rights.
+
+The full notices for code actually included in Music remain in `THIRD_PARTY_NOTICES.txt`, shipped alongside `LICENSE` in `Contents/Resources`. The service references in that file acknowledge remote APIs; they do not mean those servers are bundled. Do not remove required bundled software copyright/license notices when redistributing Music.
+
+### Timing controls
+
+Synced Lyrics is on by default; Settings → Lyrics remembers your choice. The active line appears larger and stays centered. Manual scrolling interrupts automatic scrolling, and Reduced Motion disables transitions and smooth scrolling. Click a timed line, or focus it and press Return/Space, to seek with the saved timing adjustment. Close timing settings by clicking outside or pressing Escape.
+
+Timing adjustments are saved automatically on this Mac for each song, detected Song/Video mode and lyric source. The timing panel shows the mode and source being adjusted. Song and Video have separate adjustments even when they share a YouTube URL. An adjustment for Better Lyrics does not affect NetEase; `lrcmux (KuGou)` and `lrcmux (Deezer)` also have separate adjustments. Switching back restores that combination's saved timing. Zero or Reset removes only the current song/mode/source adjustment.
+
+Music identifies each song by its YouTube video ID, or by title, artist and duration when no video ID is available. Album metadata affects lookup caching, not the saved offset identity. Offsets saved by older versions had no source information: those local preferences are preserved, but are not automatically applied to a provider. Adjust the timing once for each song/source you use. An offset shifts timestamps; it does not change audio speed or fix a different arrangement or tempo.
+
+Older adjustments with a source but without a mode are retained and used when the mode cannot be identified. Newly identified Song/Video modes start at zero rather than inheriting an adjustment from an unknown version.
 
 ## Privacy
 
@@ -77,7 +120,19 @@ Extensions you enable may read or change YouTube Music pages and access other si
 
 Custom scripts are stored locally and run only in the main frame at `https://music.youtube.com`. They can read and change the page, so import only scripts you trust. Script authors control any network requests their code makes.
 
-When Synced Lyrics is enabled, Music sends the current track title and artist directly to NetEase Cloud Music (`music.163.com`) and, when needed, LRCLIB (`lrclib.net`). Duration is used locally to compare candidate tracks. Providers receive standard connection information, including your IP address, and process it under their own policies. Requests use a separate temporary network session without your YouTube/Google session cookies or account credentials. Provider responses and anonymous session cookies stay in memory; fetched lyrics are not saved to disk. Metadata is not sent to the Music developer or the syncedlyrics maintainers. Nonzero timing adjustments and their track identifiers are stored in local app preferences. Saved offset values and video IDs are not sent to lyric providers.
+When Synced Lyrics is enabled, fresh lookups send the current song's metadata to five services. Switching it off in Settings → Lyrics stops provider lookups and cancels the active lookup. The fields sent are:
+
+| Destination | Fields sent by Music |
+| --- | --- |
+| NetEase Cloud Music (`music.163.com`) | Title and artist for search, then its selected catalog song IDs for lyric retrieval. |
+| LRCLIB (`lrclib.net`) | Title and artist. Catalog duration is compared locally. |
+| AMLL (`api.amll.dev`) | Title and artist, then the AMLL lyric ID selected from its results. NetEase associations and audio duration are compared locally. |
+| Better Lyrics (`api.betterlyrics.org`) | Title, artist, album when available, and rounded audio duration in seconds. |
+| lrcmux (`api.lrcmux.dev`) | Title, artist, album when available, and rounded audio duration in seconds. |
+
+All five receive standard connection information, including the user's IP address and Music's identifying `User-Agent`. Better Lyrics and lrcmux are aggregators and may forward search metadata to their upstream providers under their own policies. Their servers control any service-side storage, caching and logging; Music does not control those retention policies. No metadata is sent to the Music developer or syncedlyrics maintainers by this implementation.
+
+Provider requests use a separate temporary network session without YouTube/Google cookies or account credentials. Responses, anonymous provider cookies, and up to 30 selected lookup results stay in memory; fetched lyrics are not saved to disk. There is no catalog mirroring, playlist-wide prefetch, lyric upload or telemetry. Nonzero timing offsets, track identifiers, identifiable Song/Video modes and the selected lyric source names are saved in local app preferences. These saved adjustments, playback modes, YouTube video IDs and Google account credentials are not sent to lyric providers.
 
 Update checks, installer downloads, What's New, and startup message checks contact GitHub or GitHub Pages. These requests share standard connection information, such as your IP address, with GitHub under its [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). Startup messages use a separate, temporary web session without your YouTube cookies. The last successfully checked app version and IDs of one-time messages already shown stay on your Mac; neither is sent with message checks.
 
@@ -96,8 +151,8 @@ Copyright © 2026 indradprasetya.
 
 Music's source code is licensed under the **GNU General Public License version 3 only** (`GPL-3.0-only`). You may use, modify, and redistribute it under the terms of [LICENSE](LICENSE). It is provided without warranty.
 
-When distributing Music or a modified version, provide the corresponding source code under GPLv3. See [Build and release](#build-and-release) for instructions.
+When distributing Music or a modified version, provide the corresponding source code under GPLv3 and retain the bundled third-party notices. The [release script](scripts/release.sh) prepares a source archive alongside the installers.
 
-Third-party components retain their own licenses. [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) contains the notices for Sparkle and its bundled components. Both license files are included in the app's `Contents/Resources` directory.
+Third-party components retain their own licenses. [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) preserves the full notices for the adapted syncedlyrics code, Yams, Sparkle and bundled subcomponents, and separately acknowledges the remote lyric services. `LICENSE` and `THIRD_PARTY_NOTICES.txt` are included in the app's `Contents/Resources` directory. Remote server license references do not grant a license to their lyric catalogs; see [software licenses and content rights](#software-licenses-content-rights-and-attribution).
 
 Music is a third-party app and is not affiliated with, endorsed by, or sponsored by Google LLC or YouTube. YouTube Music, its branding, and the content accessed through the service are not covered by this project's license and remain subject to their respective owners' rights and the [YouTube Terms of Service](https://www.youtube.com/static?template=terms).

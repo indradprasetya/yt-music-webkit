@@ -31,14 +31,70 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Provider services and lyrics
+Remote API services and lyric content (server code is not bundled)
+
 NetEase Cloud Music: https://music.163.com/
 LRCLIB: https://lrclib.net/
+AMLL TTML DB: https://github.com/amll-dev/amll-ttml-db
+AMLL HTTP API: https://amll.dev/en/reference/http-api/overview.html
+Better Lyrics: https://betterlyrics.org/
+Better Lyrics API: https://docs.betterlyrics.org/
+lrcmux: https://lrcmux.dev/
+
 Music contacts these services directly; no syncedlyrics-operated server is used.
 These services are independent of Music. Their names identify the source of a
 response and do not imply ownership of the lyrics or endorsement of Music.
-The software licenses above do not grant a license to song lyrics. Lyrics remain
-subject to their respective rights holders and applicable service terms.
+The AMLL, Better Lyrics and lrcmux adapters and Music's TTML parser are independently
+written. Music does not bundle these projects' server implementations or client
+libraries. Remote software-license references below are acknowledgments and do
+not mean that their code or lyric catalogs are distributed in this app.
+
+NetEase Cloud Music
+The integration uses anonymous service endpoints. Applicable service terms and
+third-party content rights still apply; Music does not relicense the service.
+
+LRCLIB
+Server software: MIT, Copyright (c) 2024 tranxuanthang.
+https://github.com/tranxuanthang/lrclib/blob/main/LICENSE
+The MIT license for LRCLIB's server software is not a blanket license to every
+lyric available through its API. The server software is not bundled with Music.
+
+AMLL TTML DB shares contributor-authored material under CC0-1.0. Externally
+sourced material follows the original provider's terms. This is not a blanket
+license to the underlying lyrics. AMLL's AGPL libraries and MIT/Apache-2.0 API
+server are not bundled.
+https://github.com/amll-dev/amll-ttml-db#共享协议
+https://github.com/amll-dev/amll-ttml-api#许可
+
+Better Lyrics
+Server software: GNU GPL version 3.
+https://github.com/better-lyrics/api/blob/master/LICENSE
+https://github.com/better-lyrics/api#data-sources
+Music uses anonymous public HTTP access to cached TTML. It includes no Better
+Lyrics API key, extension key, server code or Braccato/client libraries, and does
+not call authenticated refresh or admin endpoints. An uncached query can return
+401 and be unavailable through public access. The server's GPL license does not
+grant rights to the lyric content obtained from lrc.red or other upstream sources.
+
+lrcmux
+Server software: MIT, Copyright (c) 2026 f1nniboy.
+https://github.com/f1nniboy/lrcmux/blob/main/LICENSE
+Music uses the public HTTP API without bundling lrcmux server code. When explicit
+source metadata identifies a supported provider, the footer includes it, for
+example "Lyrics from lrcmux (KuGou)". The MIT server license does not grant rights
+to the aggregated lyric content supplied by Deezer, KuGou, YouTube Music, Genius,
+Musixmatch or other originating services.
+
+Lyrics, timing data, translations, artwork and catalogs can have rights distinct
+from the software. Their respective songwriters, publishers and other rights
+holders retain those rights. Public access, attribution and these notices do not
+substitute for applicable provider terms or any required content permissions.
+Music does not bundle, host, mirror or export a lyric catalog, and fetched lyrics
+stay in memory rather than being saved to disk. These acknowledgments do not
+claim that every upstream record is authorized for every use. Distributors and
+operators remain responsible for permissions required for their use.
+
+Bundled software license texts continue below.
 
 Sparkle 2.10.0
 https://github.com/sparkle-project/Sparkle/tree/2.10.0
@@ -102,6 +158,31 @@ HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
 STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
+
+Yams 5.4.0
+https://github.com/jpsim/Yams/tree/5.4.0
+
+The MIT License (MIT)
+
+Copyright (c) 2016 JP Simard.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 --
 

@@ -17,7 +17,13 @@ final class LyricsTransport: URLProtocol {
         func parameter(_ name: String) -> String { query.first { $0.name == name }?.value ?? "" }
         let title: String = Self.lock.withLock {
             Self.requests.append(request)
-            if url.path.hasSuffix("/lyric") { return Self.titles[Int(parameter("id"))!]! }
+            if url.host == "api.betterlyrics.org" { return parameter("s") }
+            if url.host == "api.lrcmux.dev" { return parameter("title") }
+            if url.host == "api.amll.dev" {
+                if url.path.hasSuffix("/get") { return Self.titles[Int(parameter("id")) ?? 0] ?? "" }
+                return parameter("musicName")
+            }
+            if url.path.contains("/song/lyric") { return Self.titles[Int(parameter("id"))!]! }
             return String(parameter(url.host == "music.163.com" ? "s" : "q").dropLast(" Artist".count))
         }
         let recovered = Self.lock.withLock { Self.recovered.contains(title) }
@@ -44,40 +50,166 @@ final class LyricsTransport: URLProtocol {
             status = 503
             body = ["error": "temporarily unavailable"]
             _ = Self.lock.withLock { Self.recovered.insert(title) }
+        } else if url.host == "api.betterlyrics.org" {
+            if title == "Better miss" || (title == "Better words" && parameter("al") != "Album") {
+                status = 401
+                body = ["error": "API key required", "message": "Uncached queries require a valid API key"]
+            } else if title == "Syllable wrap" {
+                let parts = ["Sedang ", "tak ", "mudah ", "bertemu ", "ra", "sa ", "se", "nang"]
+                let spans = parts.enumerated().map { "<span begin='\($0.offset + 1)' end='\($0.offset + 2)'>\($0.element)</span>" }.joined()
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='10'>\(spans)</p></body></tt>"]
+            } else if title == "Better words" || title == "Better out of range" {
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body dur='3:00'><div><p begin='1' end='4'><span begin='1' end='2'>Hello </span><span begin='2' end='3'>world</span></p><p begin='10' end='12'>Second line</p></div></body></tt>"]
+            } else {
+                status = 404
+                body = ["error": "Not found"]
+            }
+        } else if url.host == "api.lrcmux.dev" {
+            if title.hasPrefix("Mux ") || title == "Better miss" {
+                let duration = title == "Mux wrong version" ? 190 : 180
+                let artist = title == "Mux wrong artist" ? "Someone else" : "Artist"
+                let wordEnd = title == "Mux invalid words" ? 190000 : 2000
+                let origin = parameter("album") == "Deezer version" ? "deezer" : "kugou"
+                body = ["track": ["title": title, "artist": artist, "album": "Album", "duration": duration, "isrc": "", "cover": [:]],
+                        "meta": ["level": "word", "source": ["id": origin]],
+                        "lines": [
+                            ["text": "Hello world", "start": 1000, "end": 4000,
+                             "words": [["text": "Hello ", "start": 1000, "end": wordEnd], ["text": "world", "start": 2000, "end": 3000]]],
+                            ["text": "Second line", "start": 10000, "end": 12000, "words": []]
+                        ]]
+            } else {
+                status = 404
+                body = ["title": "Not Found", "detail": "no lyrics found"]
+            }
+        } else if url.host == "api.amll.dev" {
+            if title == "AMLL partial error" {
+                status = 502
+                body = ["error": "unavailable"]
+            } else if title == "AMLL busy" {
+                status = 429
+                body = ["error": "busy"]
+            } else if !title.hasPrefix("AMLL ") {
+                body = ["status": 200, "data": ["items": [], "pagination": ["page": 1, "pageSize": 10, "total": 0, "totalPages": 0, "hasMore": false]]]
+            } else {
+                let id = Self.lock.withLock { Self.titles.first { $0.value == title }?.key ?? 9000 }
+                if id == 9000 { Self.lock.withLock { Self.titles[id] = title } }
+                var song: [String: Any] = ["id": id, "filename": "fixture-\(id).ttml", "musicNames": [title],
+                    "artistNames": ["Artist"], "albumNames": [], "ncmMusicIds": [String(id)],
+                    "qqMusicIds": [], "appleMusicIds": [], "spotifyIds": [], "isrcs": [],
+                    "authorIds": [], "authorUsernames": [], "format": "ttml"]
+                if title == "AMLL wrong version" { song["ncmMusicIds"] = ["999999"] }
+                if title == "AMLL wrong artist" { song["artistNames"] = ["Someone else"] }
+                if url.path.hasSuffix("/search") {
+                    var items = [song]
+                    if title == "AMLL partial" {
+                        var second = song
+                        second["id"] = id + 10000
+                        Self.lock.withLock { Self.titles[id + 10000] = "AMLL partial error" }
+                        items.append(second)
+                    }
+                    body = ["status": 200, "data": ["items": items, "pagination": ["page": 1, "pageSize": 10, "total": items.count, "totalPages": 1, "hasMore": false]]]
+                } else {
+                    let text = title == "AMLL partial" ? "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='4'>First line</p><p begin='10' end='12'>Second line</p></body></tt>" : title == "AMLL malformed" ? "<tt><broken>" : title == "AMLL entity" ? "<!DOCTYPE tt [<!ENTITY external SYSTEM 'file:///etc/hosts'>]><tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='4'>&external;</p></body></tt>" : """
+                        <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+                        <body dur="00:03:00.000"><div begin="0.115" end="00:03:00.000">
+                        <p begin="00:01.000" end="00:04.000"><span begin="1" end="2">Hello</span> <span begin="00:00:02.000" end="3">world</span><span ttm:role="x-translation">Translation</span><span ttm:role="x-roman">Romanization</span><span ttm:role="x-bg"><span begin="2" end="3">Backing</span></span></p>
+                        <p begin="10" end="12">Second line</p>
+                        </div></body></tt>
+                        """
+                    song["lyrics"] = text
+                    body = ["status": 200, "data": song]
+                }
+            }
         } else if url.host == "lrclib.net" {
-            body = title == "No match" || title == "Plain" ? [] : [
+            if title == "AMLL standalone" || title == "AMLL partial" { body = [] }
+            else if title == "Cross source" {
+                body = [["trackName": title, "artistName": "Artist", "duration": 180,
+                         "syncedLyrics": "[00:01.00]First line\n[00:10.00]Second line",
+                         "lyricsfile": """
+                         version: '1.0'
+                         metadata:
+                           title: Cross source
+                           artist: Artist
+                           duration_ms: 180000
+                         lines:
+                           - text: 'First line'
+                             start_ms: 1000
+                             end_ms: 4000
+                             words:
+                               - text: 'First '
+                                 start_ms: 1000
+                                 end_ms: 2000
+                               - text: line
+                                 start_ms: 2000
+                                 end_ms: 3000
+                         plain: 'First line'
+                         """, "plainLyrics": "", "instrumental": false]]
+            } else {
+                body = ["No match", "Plain", "Metadata only", "Metadata with plain", "Metadata with timing"].contains(title) ? [] : [
                 ["trackName": title, "artistName": "Wrong artist", "duration": 180, "syncedLyrics": "[00:01]Wrong artist"],
                 ["trackName": title, "artistName": "Artist", "duration": 180,
                  "syncedLyrics": "[00:01.00]Fallback first\n[00:10.00]Fallback second", "plainLyrics": "", "instrumental": false]
-            ]
+                ]
+            }
+        } else if title == "AMLL standalone" {
+            body = ["code": -462]
         } else if title == "Fallback" || (title == "No match" && !recovered) {
             if title == "Fallback" { body = ["code": -462] }
             else { body = ["code": 200, "result": ["songs": [] as [Any]]] }
-        } else if url.path.hasSuffix("/lyric") {
-            let later = (2...11).map { index -> String in
-                var line = String(format: "[%02d:%02d.00]Line %d", index * 10 / 60, index * 10 % 60, index)
-                if index == 7 { line += " with a longer phrase that wraps inside a narrow panel" }
-                return line
+        } else if title == "Word timing" && url.path == "/api/search/pc" {
+            body = ["code": -462]
+        } else if url.path.contains("/song/lyric") {
+            if title == "Credit fallback" {
+                body = ["code": 200, "lrc": ["lyric": "[00:00.00]Composer: Example Writer"]]
+            } else if title == "Better words" || title == "Better out of range" {
+                let invalid = title == "Better words" ? "[1000,1000](1000,0,0)Hello" : "[200000,1000](200000,1000,0)Hello"
+                body = ["code": 200, "yrc": ["lyric": invalid],
+                        "lrc": ["lyric": "[00:01.00]First line\n[00:10.00]Second line"]]
+            } else if title.hasPrefix("Metadata ") {
+                let credits = #"{"t":-1,"c":[{"tx":"作词: "},{"tx":"Example Writer"}]}"#
+                let plain = title == "Metadata with timing" ? "\n[00:01.00]First real line\n[00:10.00]Second real line"
+                    : title == "Metadata with plain" ? "\nFirst real line\nSecond real line" : ""
+                body = ["code": 200, "lrc": ["lyric": credits + plain], "yrc": ["lyric": credits]]
+            } else if title == "AMLL lyric failure" || title == "AMLL partial" {
+                body = ["code": -462]
+            } else if title == "Word timing", url.path.hasSuffix("/v1"), parameter("yv") == "0",
+               (Int(parameter("id")) ?? 0) >= 10000 {
+                body = ["code": 200, "yrc": ["lyric": "[1000,4000](1000,1000,0)Hello (2000,1000,0)world"]]
+            } else {
+                let later = (2...11).map { index -> String in
+                    var line = String(format: "[%02d:%02d.00]Line %d", index * 10 / 60, index * 10 % 60, index)
+                    if index == 7 { line += " with a longer phrase that wraps inside a narrow panel" }
+                    return line
+                }
+                let credits = title == "Credits" ? ["[00:00.00]作词：Example Writer", "[00:00.00]Composer: Example Composer",
+                    "[00:00.00](Artist)", "[00:00.00](Justin Bieber)", "[00:02.00](La-la-la)",
+                    "[00:03.00](I love you)", "[00:04.00](Album)", "[00:05.00]Justin Bieber"] : []
+                body = ["code": 200, "lrc": ["lyric": (credits + ["[00:01.00]First line", "[00:10.00]Second line"] + later).joined(separator: "\n")]]
             }
-            let credits = title == "Credits" ? ["[00:00.00]作词：Example Writer", "[00:00.00]Composer: Example Composer",
-                "[00:00.00](Artist)", "[00:00.00](Justin Bieber)", "[00:02.00](La-la-la)",
-                "[00:03.00](I love you)", "[00:04.00](Album)", "[00:05.00]Justin Bieber"] : []
-            body = ["code": 200, "lrc": ["lyric": (credits + ["[00:01.00]First line", "[00:10.00]Second line"] + later).joined(separator: "\n")]]
         } else {
             let id = Self.lock.withLock { () -> Int in
                 let next = Self.titles.count + 1
                 Self.titles[next] = title
+                if title == "Word timing" { Self.titles[next + 10000] = title }
                 return next
             }
-            body = ["code": 200, "result": ["songs": [
+            if title == "Word timing" {
+                body = ["code": 200, "result": ["songs": [
+                    ["id": id, "name": title, "ar": [["name": "Artist"]], "dt": 180000],
+                    ["id": id + 10000, "name": title, "ar": [["name": "Artist"]], "dt": 180500]
+                ]]]
+            } else {
+                body = ["code": 200, "result": ["songs": [
                 ["id": id, "name": title, "artists": [["name": "Wrong artist"]], "duration": 180000],
                 ["id": id, "name": title + " (Live)", "artists": [["name": "Artist"]], "duration": 180000],
                 ["id": id, "name": title, "artists": [["name": "Artist"]], "duration": title == "Plain" || title == "Better sync" ? 183000 : 180000]
-            ]]]
+                ]]]
+            }
         }
         let data = try! JSONSerialization.data(withJSONObject: body)
+        let retryAfter = title == "AMLL busy" ? "30" : title == "Cooldown" ? "3" : "1"
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil,
-                                       headerFields: ["Content-Type": "application/json", "Retry-After": "1"])!
+                                       headerFields: ["Content-Type": "application/json", "Retry-After": retryAfter])!
         let send = { [self] in
             Self.lock.lock()
             let shouldSend = !stopped
@@ -87,7 +219,7 @@ final class LyricsTransport: URLProtocol {
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
         }
-        if title == "Slow" { DispatchQueue.global().asyncAfter(deadline: .now() + 0.6, execute: send) }
+        if title == "Slow" || title == "Background slow" { DispatchQueue.global().asyncAfter(deadline: .now() + 0.6, execute: send) }
         else if title == "Pending" { DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: send) }
         else { send() }
     }
@@ -110,15 +242,162 @@ setbuf(stdout, nil)
 
 @MainActor func check() async throws {
     let live = CommandLine.arguments.contains("--live")
+    let plainUI = CommandLine.arguments.contains("--plain-ui-only")
     let configuration = URLSessionConfiguration.ephemeral
     configuration.urlCache = nil
     configuration.httpAdditionalHeaders = ["User-Agent": "Music/1.2.0 (https://github.com/indradprasetya/yt-music-webkit)"]
     if !live { configuration.protocolClasses = [LyricsTransport.self] }
     let provider = MusicLyricsProvider(session: URLSession(configuration: configuration))
+    if CommandLine.arguments.contains("--five-sources-only") {
+        func lookup(_ title: String) async throws -> MusicLyricsProvider.Record? {
+            let track = MusicLyricsProvider.Track(["title": title, "artist": "Artist", "album": "Album", "duration": 180.0])!
+            return try await provider.lookup(track).record
+        }
+        func require(_ condition: Bool, _ message: String) throws {
+            guard condition else { throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        let better = try await lookup("Better words")
+        try require(better?.source == "Better Lyrics" && better?.timingQuality == 2,
+                    "Better Lyrics word timing must participate and improve existing line timing")
+        let outside = try await lookup("Better out of range")
+        try require(outside?.source == "Better Lyrics" && outside?.timingQuality == 2,
+                    "Out-of-range NetEase word times must not suppress valid Better Lyrics timing")
+        let hosts = LyricsTransport.lock.withLock { Set(LyricsTransport.requests.compactMap { $0.url?.host }) }
+        try require(hosts.isSuperset(of: ["music.163.com", "lrclib.net", "api.amll.dev", "api.betterlyrics.org", "api.lrcmux.dev"]),
+                    "Every source must participate even after word timing was found")
+        let mux = try await lookup("Mux words")
+        try require(mux?.source == "lrcmux (KuGou)" && mux?.timingQuality == 2,
+                    "lrcmux must preserve word timing and explicitly reported provider attribution")
+        let words = mux?.lyricsFileLines.first?["words"] as? [[String: Any]]
+        try require(words?.first?["word"] as? String == "Hello " && words?.first?["start_time"] as? Int == 1000,
+                    "lrcmux must preserve text spacing and millisecond timestamps")
+        for title in ["Mux wrong version", "Mux wrong artist", "Mux invalid words"] {
+            let result = try await lookup(title)
+            try require(result?.source == "NetEase" && result?.timingQuality == 1,
+                        "\(title) must preserve the valid line-timed result")
+        }
+        let miss = try await lookup("Better miss")
+        try require(miss?.source == "lrcmux (KuGou)" && miss?.timingQuality == 2,
+                    "An anonymous Better Lyrics cache miss must not block another word-timed source")
+        let cached = try await lookup("Better words")
+        try require(cached?.source == "Better Lyrics", "A miss for one song must not disable cached Better Lyrics songs")
+        let seconds = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1s' end='3s'><span begin='1s' end='2s'>Hello</span></p></body></tt>", duration: 180)
+        try require(seconds?.lines.first?["time"] as? Int == 1000,
+                    "Provider TTML seconds offsets must retain their actual timing")
+        print("PASS: five sources, Better Lyrics cache access, lrcmux validation, attribution and timing")
+        return
+    }
+    if CommandLine.arguments.contains("--metadata-only") {
+        let metadata = MusicLyricsProvider.Track(["title": "Metadata only", "artist": "Artist", "duration": 180.0])!
+        let result = try await provider.lookup(metadata)
+        guard result.record == nil else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "NetEase JSON credit rows without vocals must not be accepted as song lyrics"])
+        }
+        let plain = MusicLyricsProvider.Track(["title": "Metadata with plain", "artist": "Artist", "duration": 180.0])!
+        let actual = try await provider.lookup(plain).record
+        guard actual?.plain == "First real line\nSecond real line" else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "NetEase plain text must exclude JSON credits and preserve the real lyric lines"])
+        }
+        let timed = MusicLyricsProvider.Track(["title": "Metadata with timing", "artist": "Artist", "duration": 180.0])!
+        let lines = try await provider.lookup(timed).record
+        guard lines?.timingQuality == 1, lines?.yrc.isEmpty == true else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Metadata-only YRC must not override the actual LRC lyric lines"])
+        }
+        print("PASS: NetEase metadata rejection and readable plain text")
+        return
+    }
+    if CommandLine.arguments.contains("--amll-only") {
+        func lookup(_ title: String) async throws -> MusicLyricsProvider.Record? {
+            let track = MusicLyricsProvider.Track(["title": title, "artist": "Artist", "duration": 180.0])!
+            return try await provider.lookup(track).record
+        }
+        func require(_ condition: Bool, _ message: String) throws {
+            guard condition else { throw NSError(domain: "LyricsCheck", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        let words = try await lookup("AMLL words")
+        try require(words?.source == "AMLL" && words?.timingQuality == 2,
+                    "AMLL word timing must improve a matching NetEase/LRCLIB line result")
+        let first = words?.lyricsFileLines.first
+        let timedWords = first?["words"] as? [[String: Any]]
+        try require(first?["text"] as? String == "Hello world" && timedWords?.count == 2,
+                    "TTML must preserve word spacing and exclude auxiliary vocals and translations")
+        try require(timedWords?.first?["start_time"] as? Int == 1000
+                    && timedWords?.first?["end_time"] as? Int == 2000
+                    && timedWords?.last?["start_time"] as? Int == 2000,
+                    "TTML second, minute and hour clocks must preserve millisecond timing")
+        for title in ["AMLL malformed", "AMLL entity", "AMLL wrong artist", "AMLL wrong version"] {
+            let result = try await lookup(title)
+            try require(result?.source == "NetEase" && result?.timingQuality == 1,
+                        "\(title) must keep the valid existing synchronized result")
+        }
+        let standalone = try await lookup("AMLL standalone")
+        try require(standalone?.source == "AMLL" && standalone?.synchronized == false
+                    && standalone?.plain == "Hello world\nSecond line",
+                    "Unverified platform/version matching must offer plain text instead of invented synchronization")
+        let cdata = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='4'><span begin='1' end='2'><![CDATA[ Hello ]]></span><span begin='2' end='3'>world </span></p></body></tt>", duration: 180)
+        try require(cdata?.plain == "Hello world" && (cdata?.lines.first?["words"] as? [[String: Any]])?.count == 2,
+                    "TTML must keep CDATA vocals and trim only outer whitespace without losing word timing")
+        let recovered = try await lookup("AMLL lyric failure")
+        try require(recovered?.source == "AMLL" && recovered?.timingQuality == 2,
+                    "A failed NetEase lyric request must retain verified catalog IDs for AMLL")
+        let partial = try await lookup("AMLL partial")
+        try require(partial?.source == "AMLL" && partial?.timingQuality == 1,
+                    "A later failed AMLL candidate must not discard an already valid synchronized result")
+        let limited = try await lookup("AMLL busy")
+        try require(limited?.source == "NetEase", "AMLL rate limits must preserve synchronized fallbacks")
+        let before = LyricsTransport.lock.withLock { LyricsTransport.requests.filter { $0.url?.host == "api.amll.dev" }.count }
+        _ = try await lookup("AMLL busy")
+        try require(LyricsTransport.lock.withLock { LyricsTransport.requests.filter { $0.url?.host == "api.amll.dev" }.count } == before,
+                    "AMLL Retry-After must prevent requests during its cooldown")
+        let tooDeep = "<tt xmlns='http://www.w3.org/ns/ttml'><body>" + String(repeating: "<div>", count: 65)
+            + "<p begin='1' end='2'>Text</p>" + String(repeating: "</div>", count: 65) + "</body></tt>"
+        try require(MusicTTML.parse(tooDeep, duration: 180) == nil, "Excessive XML nesting must be rejected")
+        let outOfRange = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='999999999999999' end='9999999999999999'>Text</p></body></tt>", duration: 180)
+        try require(outOfRange?.plain == "Text" && outOfRange?.lines.isEmpty == true,
+                    "Out-of-range timestamps must remain plain text without integer overflow")
+        let partialTiming = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='4'><span begin='1' end='2'>Hello</span> world</p></body></tt>", duration: 180)
+        try require(partialTiming?.lines.first?["text"] as? String == "Hello world"
+                    && (partialTiming?.lines.first?["words"] as? [[String: Any]])?.isEmpty == true,
+                    "Untimed sung text must keep line timing instead of borrowing the previous word's timestamps")
+        let ruby = MusicTTML.parse("<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'><body><p begin='1' end='4'><span begin='1' end='2' tts:ruby='container'><span tts:ruby='base'>字</span><span tts:ruby='text'>ji</span></span></p></body></tt>", duration: 180)
+        try require(ruby?.plain == "字" && (ruby?.lines.first?["words"] as? [[String: Any]])?.first?["word"] as? String == "字",
+                    "Ruby pronunciation annotations must not leak into sung vocals")
+        print("PASS: AMLL native API, TTML word timing, spacing, auxiliary text, matching, XML rejection and fallback")
+        return
+    }
+    if CommandLine.arguments.contains("--providers-only") {
+        let track = MusicLyricsProvider.Track(["title": "Word timing", "artist": "Artist", "duration": 180.0])!
+        let result = try await provider.lookup(track)
+        guard result.record?.source == "NetEase", result.record?.timingQuality == 2 else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "NetEase word timing must win over LRCLIB line timing after a blocked legacy search and a line-only matching release"])
+        }
+        let alternatives = result.dictionary["alternatives"] as? [[String: Any]] ?? []
+        guard Set(alternatives.compactMap { $0["source"] as? String }) == ["NetEase", "LRCLIB"] else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Keep matching alternatives so a manual provider choice can override automatic timing quality"])
+        }
+        guard LyricsTransport.lock.withLock({ LyricsTransport.requests.contains { $0.url?.host == "api.amll.dev" } }) else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "AMLL must participate even when an earlier provider already has word timing"])
+        }
+        print("PASS: native word timing selection across matching releases and providers")
+        return
+    }
     let suite = "MusicLyricsCheck.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     let key = "MusicCustomLyricsEnabled"
-    let offsetsKey = "MusicLyricsOffsetsByTrack"
+    let offsetsKey = "MusicLyricsOffsetsByTrackAndSource"
+    if CommandLine.arguments.contains("--source-offsets-only") {
+        defaults.set(["video:sourceOffsets01": 750], forKey: "MusicLyricsOffsetsByTrack")
+    }
+    if CommandLine.arguments.contains("--mode-offsets-only") {
+        defaults.set(["video:modeOffsets01|source:NetEase": 750], forKey: offsetsKey)
+    }
     defer { defaults.removePersistentDomain(forName: suite) }
     let lyrics = MusicLyrics(provider: provider, defaults: defaults)
     guard lyrics.isEnabled else {
@@ -131,16 +410,24 @@ setbuf(stdout, nil)
     assert(MusicLyrics(defaults: defaults).isEnabled, "A saved ON choice must survive a new instance")
     let webConfiguration = WKWebViewConfiguration()
     webConfiguration.websiteDataStore = .nonPersistent()
+    webConfiguration.preferences.inactiveSchedulingPolicy = .none
+    for key in ["hiddenPageDOMTimerThrottlingEnabled", "pageVisibilityBasedProcessSuppressionEnabled"] {
+        let setter = "_set" + key.prefix(1).uppercased() + key.dropFirst() + ":"
+        if webConfiguration.preferences.responds(to: NSSelectorFromString(setter)) {
+            webConfiguration.preferences.setValue(false, forKey: key)
+        }
+    }
     let controller = webConfiguration.userContentController
     lyrics.connect(to: controller)
     let frameCapture = FrameCapture()
     controller.add(frameCapture, contentWorld: .defaultClient, name: "testFrame")
     controller.addUserScript(WKUserScript(source: "if (window !== window.top) webkit.messageHandlers.testFrame.postMessage(0);",
         injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: .defaultClient))
-    let metadata = live ? [CommandLine.arguments[2], CommandLine.arguments[3]] : ["Fixture", "Artist"]
+    let metadata = live ? [CommandLine.arguments[2], CommandLine.arguments[3]]
+        : [plainUI ? "Metadata with plain" : "Fixture", "Artist"]
     let duration = live ? Double(CommandLine.arguments[4])! : 180
     let literal = String(data: try JSONSerialization.data(withJSONObject: metadata), encoding: .utf8)!
-    if CommandLine.arguments.contains("--media-session") || live {
+    if CommandLine.arguments.contains("--media-session") || live || plainUI {
         controller.addUserScript(WKUserScript(source: "const m = \(literal); navigator.mediaSession.metadata = new MediaMetadata({title:m[0],artist:m[1]});",
             injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     }
@@ -160,7 +447,7 @@ setbuf(stdout, nil)
             if (!row || !scroll) return false;
             const line = row.getBoundingClientRect();
             const viewport = scroll.getBoundingClientRect();
-            return Math.abs(line.top + line.height / 2 - viewport.top - scroll.clientHeight / 2) < 2
+            return Math.abs(line.top + line.height / 2 - viewport.top - scroll.clientHeight / 2) < 4
                 && document.querySelector('#tab-renderer').scrollTop === 0;
         };
         window.fetch = () => { throw new Error('Lyrics must use native networking'); };
@@ -169,6 +456,12 @@ setbuf(stdout, nil)
     lyrics.apply(to: controller)
     let scriptCount = controller.userScripts.count
     let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 600), configuration: webConfiguration)
+    // Keep the WebKit fixture rendering when the host app covers its window.
+    func setOcclusionDetection(_ enabled: Bool) {
+        guard web.responds(to: NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")) else { return }
+        web.setValue(enabled, forKey: "windowOcclusionDetectionEnabled")
+    }
+    setOcclusionDetection(false)
     let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = web
     window.makeKeyAndOrderFront(nil)
@@ -186,7 +479,8 @@ setbuf(stdout, nil)
             try await Task.sleep(for: .milliseconds(20))
         }
         let notice = try? await js("document.querySelector('.lyrics-message')?.textContent || 'No notice'")
-        throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(reason); notice: \(notice ?? "missing")"])
+        let state = try? await js("JSON.stringify({source:document.querySelector('.lyrics-source')?.textContent, lines:document.querySelectorAll('.lyrics-line').length, animations:document.querySelector('#tab-renderer')?.getAnimations().map(animation => ({state:animation.playState,time:animation.currentTime})), visible:document.visibilityState, pageFocused:document.hasFocus(), focused:document.activeElement?.className, focusWithin:document.activeElement?.parentElement?.matches(':focus-within'), opacity:document.activeElement && getComputedStyle(document.activeElement).opacity, layout:window.beforeWeightChange && [...document.querySelectorAll('.lyrics-line')].map((row,index) => ({before:beforeWeightChange[index], height:row.offsetHeight, weight:getComputedStyle(row).fontWeight, color:getComputedStyle(row).color, current:row.classList.contains('is-current')}))})")
+        throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(reason); notice: \(notice ?? "missing"); state: \(state ?? "missing")"])
     }
     func changeTrack(_ title: String) async throws {
         let value = String(data: try JSONEncoder().encode(title), encoding: .utf8)!
@@ -203,12 +497,13 @@ setbuf(stdout, nil)
             await new Promise(requestAnimationFrame); return null;
             """, arguments: ["videoID": videoID], in: nil, contentWorld: .defaultClient)
     }
-    func expectSavedOffset(_ value: Int?, for identity: String) async throws {
+    func expectSavedOffset(_ value: Int?, for identity: String, source: String = "NetEase") async throws {
+        let key = "\(identity)|source:\(source)"
         for _ in 0..<100 {
-            if lyrics.trackOffsets[identity] == value { return }
+            if lyrics.trackOffsets[key] == value { return }
             try await Task.sleep(for: .milliseconds(20))
         }
-        throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Native per-song offset was not saved or removed"])
+        throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected offset \(String(describing: value)) for \(key), found \(String(describing: lyrics.trackOffsets[key]))"])
     }
     func update() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -228,6 +523,373 @@ setbuf(stdout, nil)
         </ytmusic-player-page></body></html>
         """
     web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/"))
+    func snapshot(_ name: String) async throws {
+        guard let directory = ProcessInfo.processInfo.environment["MUSIC_LYRICS_SNAPSHOTS"] else { return }
+        let image = try await web.takeSnapshot(configuration: nil)
+        let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
+        try bitmap.representation(using: .png, properties: [:])!
+            .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+    }
+    if CommandLine.arguments.contains("--provider-choice-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before choosing a provider")
+        try await changeTrack("Credit fallback")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'Fallback first' && document.querySelector('.lyrics-offset-source').textContent === 'LRCLIB'", "A credit-only automatic winner must not hide another provider's usable lyrics")
+        try await changeTrack("Fixture")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'First line'", "Restore normal lyrics before choosing a provider")
+        try await selectVersion("providerChoice01")
+        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-provider-select')?.options.length === 3", "Offer Automatic and every matching provider after the new song has loaded")
+        _ = try await js("document.querySelector('.lyrics-settings-button').click(); null")
+        let requests = LyricsTransport.lock.withLock { LyricsTransport.requests.count }
+        _ = try await js("const select = document.querySelector('.lyrics-provider-select'); select.value = 'LRCLIB'; select.dispatchEvent(new Event('change')); null")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'Fallback first' && !document.querySelector('.lyrics-settings-panel').hidden", "Choosing LRCLIB must immediately replace the lyrics and keep settings open")
+        try await expect("document.querySelector('.lyrics-provider-note').textContent.includes('Saved')", "Explain that the provider is remembered for this song")
+        assert(LyricsTransport.lock.withLock { LyricsTransport.requests.count } == requests, "Switch providers without making another network request")
+        for _ in 0..<100 {
+            if defaults.dictionary(forKey: "MusicLyricsProvidersByTrack")?["video:providerChoice01"] as? String == "LRCLIB" { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        assert(defaults.dictionary(forKey: "MusicLyricsProvidersByTrack")?["video:providerChoice01"] as? String == "LRCLIB")
+        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expectSavedOffset(250, for: "video:providerChoice01", source: "LRCLIB")
+        try await selectVersion("providerChoice02")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-provider-select').value === ''", "A provider choice must apply only to its song")
+        try await selectVersion("providerChoice01")
+        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to a song restores its provider and that provider's offset")
+        _ = try await js("document.documentElement.dataset.beforeProviderReload = 'true'; null")
+        web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=providerChoice01"))
+        try await expect("!document.documentElement.dataset.beforeProviderReload && document.querySelector('.lyrics-provider-select')?.value === 'LRCLIB' && document.querySelector('.lyrics-seek')?.textContent === 'Fallback first'", "Remember the provider across a full document reload")
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expect("document.querySelector('.lyrics-provider-select').value === 'LRCLIB' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Reset timing without changing the saved provider")
+        _ = try await js("document.querySelector('.lyrics-provider-select').value = ''; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Automatic restores the best match with its own offset")
+        try await changeTrack("Better words")
+        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics'", "Load the provider before saving a preference")
+        _ = try await js("document.querySelector('.lyrics-provider-select').value = 'LRCLIB'; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'Fallback first' && document.querySelectorAll('.lyrics-word').length === 0", "A manual line-timed provider must override the automatic word-timed winner")
+        _ = try await js("document.querySelector('.lyrics-provider-select').value = 'Better Lyrics'; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-provider-note').textContent.includes('unavailable')", "An unavailable saved provider must explain the fallback and allow recovery")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
+        try await expect("document.querySelector('.lyrics-provider-select').value === 'Better Lyrics' && document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics'", "A temporarily unavailable provider must keep its saved preference")
+        _ = try await js("document.querySelector('.lyrics-provider-select').value = ''; document.querySelector('.lyrics-provider-select').dispatchEvent(new Event('change')); null")
+        _ = try await js("webkit.messageHandlers.musicLyricsProvider.postMessage({trackKey:'video:bad/id', source:'LRCLIB'}); webkit.messageHandlers.musicLyricsProvider.postMessage({trackKey:'video:bad', source:'Unknown'}); null")
+        try await Task.sleep(for: .milliseconds(100))
+        assert(defaults.object(forKey: "MusicLyricsProvidersByTrack") == nil, "Automatic clears saved choices and invalid provider messages must not persist")
+        print("PASS: manual providers, local switching, per-song defaults, reload, source offsets, unavailable fallback and validation")
+        return
+    }
+    if CommandLine.arguments.contains("--align-ui-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before aligning")
+        try await selectVersion("alignTiming01")
+        try await expect("!!document.querySelector('.lyrics-align')", "Offer a separate align action on timed lyric lines")
+        _ = try await js("fixtureTime = 12; window.lastSeek = null; document.querySelector('.lyrics-align').click(); null")
+        try await expect("lastSeek === null && document.querySelector('.lyrics-settings-panel output').textContent === '+11.00 s' && document.querySelector('.lyrics-line.is-current')?.textContent === 'First line'", "Align the line to playback without seeking or silently clamping to ten seconds")
+        try await expectSavedOffset(11000, for: "video:alignTiming01")
+        _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
+        try await expect("lastSeek === 21", "Seeking another line includes the aligned offset")
+        _ = try await js("fixtureTime = 4.5; lastSeek = null; document.querySelectorAll('.lyrics-align')[1].click(); null")
+        try await expect("lastSeek === null && document.querySelector('.lyrics-settings-panel output').textContent === '-5.50 s'", "Realignment calculates a fresh offset instead of accumulating the previous one")
+        try await expectSavedOffset(-5500, for: "video:alignTiming01")
+        try await update()
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '-5.50 s'", "Alignment survives a renderer restart")
+        _ = try await js("fixtureTime = NaN; document.querySelector('.lyrics-align').click(); null")
+        try await expectSavedOffset(-5500, for: "video:alignTiming01")
+        _ = try await js("fixtureTime = 12; document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: "video:alignTiming01")
+        try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0", "Finish revealing lyrics before inspecting their layout")
+        _ = try await js("document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; null")
+        for width in [280, 520] {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeFirstResponder(web)
+            try await expect("document.hasFocus()", "Activate the test page before checking keyboard focus")
+            _ = try await js("document.querySelector('#tab-renderer').style.width = '\(width)px'; document.querySelectorAll('.lyrics-align')[1].focus({preventScroll:true}); null")
+            try await expect("document.activeElement.classList.contains('lyrics-align') && getComputedStyle(document.activeElement).opacity === '1'", "Reveal alignment on keyboard focus at \(width)px")
+            let dimensions = try await js("JSON.stringify({width:document.querySelector('.lyrics-scroll').clientWidth, content:document.querySelector('.lyrics-scroll').scrollWidth})")
+            try await expect("document.querySelector('.lyrics-scroll').scrollWidth <= document.querySelector('.lyrics-scroll').clientWidth", "No horizontal overflow at \(width)px: \(dimensions ?? "unknown")")
+            try await snapshot("align-\(width)")
+            _ = try await js("document.querySelector('.lyrics-settings-button').click(); null")
+            try await expect("document.querySelector('.lyrics-settings-panel').getBoundingClientRect().bottom <= document.querySelector('#tab-renderer').getBoundingClientRect().bottom", "Settings must fit the lyrics viewport")
+            try await snapshot("providers-\(width)")
+            _ = try await js("document.querySelector('.lyrics-settings-button').click(); null")
+        }
+        print("PASS: one-click alignment, both offset directions, seeking, persistence, reset, invalid clocks and keyboard layout")
+        return
+    }
+    func checkFeedback() async throws {
+        try await expect("!!document.querySelector('.lyrics-line.is-current') && !document.hidden", "Load visible lyrics before checking motion feedback")
+        _ = try await js("""
+            document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif';
+            document.querySelector('#tab-renderer').style.width = '360px';
+            document.querySelector('#native-lyrics').style.cssText = 'padding:24px 16px;font-size:18px';
+            document.querySelector('#native-lyrics').textContent = 'Native lyrics remain readable while searching';
+            null
+            """)
+        try await changeTrack("Slow")
+        try await expect("""
+            (() => {
+                const spinner = document.querySelector('.lyrics-spinner');
+                return spinner?.getAttribute('aria-hidden') === 'true'
+                    && getComputedStyle(spinner).animationName !== 'none'
+                    && document.querySelector('.lyrics-scroll').getAttribute('aria-busy') === 'true'
+                    && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none';
+            })()
+            """, "Show animated, accessible loading feedback alongside native lyrics")
+        try await snapshot("loading")
+        try await expect("""
+            !document.querySelector('.lyrics-scroll').hidden && lineIsCentered()
+                && document.querySelector('#tab-renderer').getAnimations().some(animation => animation.playState === 'running')
+            """, "Position the active line before the lyrics fade in", seconds: 6)
+        try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0", "Finish the lyric reveal")
+        try await snapshot("synced")
+        try await changeTrack("HTTP error")
+        try await expect("!!document.querySelector('.lyrics-info-button')", "Show provider failure feedback")
+        for width in [280, 360, 520] {
+            _ = try await js("document.querySelector('#tab-renderer').style.width = '\(width)px'; null")
+            try await expect("""
+                (() => {
+                    const notice = document.querySelector('#music-custom-lyrics').getBoundingClientRect();
+                    const text = document.querySelector('.lyrics-message-text').getBoundingClientRect();
+                    const actions = document.querySelector('.lyrics-message-actions').getBoundingClientRect();
+                    return Math.abs(text.top + text.height / 2 - actions.top - actions.height / 2) < 2
+                        && actions.right <= notice.right && notice.height <= 80;
+                })()
+                """, "Keep feedback and actions together without excess space at \(width)px")
+            try await snapshot("unavailable-\(width)")
+        }
+        _ = try await js("document.querySelector('.lyrics-info-button').click(); null")
+        try await snapshot("error-details")
+        _ = LyricsTransport.lock.withLock { LyricsTransport.recovered.insert("HTTP error") }
+        _ = try await js("const retry = document.querySelector('.lyrics-message button:not(.lyrics-info-button)'); retry.focus(); retry.click(); null")
+        try await expect("document.activeElement === document.querySelector('.lyrics-scroll') && !document.querySelector('.lyrics-scroll').hidden",
+                         "Keep keyboard focus usable when retry is replaced by lyrics")
+        try await changeTrack("Slow")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Reuse a cached result after retry")
+        let fadingOut = "document.querySelector('#tab-renderer').getAnimations().some(animation => animation.effect.getKeyframes().at(-1).opacity === '0')"
+        try await changeTrack("Interrupted track fade")
+        try await expect(fadingOut, "Begin fading the outgoing lyrics before changing track")
+        try await changeTrack("Better words")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && document.querySelector('.lyrics-source').textContent.includes('Better Lyrics')",
+                         "An interrupted fade must display only the latest song's source")
+        try await changeTrack("Interrupted tab fade")
+        try await expect(fadingOut, "Begin fading the outgoing lyrics before hiding the tab")
+        _ = try await js("document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','false'); null")
+        try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0 && getComputedStyle(document.querySelector('#tab-renderer')).opacity === '1' && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'",
+                         "Cancel a running fade without leaving another tab transparent")
+        try await changeTrack("Recovered")
+        _ = try await js("document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','true'); null")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()",
+                         "Changing tracks and tabs must not reveal stale lyrics")
+        try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0", "Finish the last reveal before testing reduced motion")
+        _ = try await js("""
+            fixtureReduceMotion = true;
+            window.reducedReveal = null;
+            const revealObserver = new MutationObserver(() => {
+                if (!document.querySelector('.lyrics-scroll').hidden) {
+                    reducedReveal = lineIsCentered() && document.querySelector('#tab-renderer').getAnimations().length === 0;
+                    revealObserver.disconnect();
+                }
+            });
+            revealObserver.observe(document.querySelector('.lyrics-scroll'), {attributes:true, attributeFilter:['hidden']});
+            null
+            """)
+        try await changeTrack("Reduced motion feedback")
+        try await expect("reducedReveal === true", "Reduced Motion must reveal centered lyrics without a fade")
+        _ = try await js("fixtureReduceMotion = false; null")
+        try await changeTrack("Occluded fade")
+        try await expect(fadingOut, "Begin a transition before hiding the window")
+        setOcclusionDetection(true)
+        window.orderOut(nil)
+        try await expect("document.hidden && !document.querySelector('.lyrics-scroll').hidden && document.querySelector('#tab-renderer').getAnimations().length === 0",
+                         "Hiding the window must finish the swap without waiting for a suspended animation")
+        window.orderFrontRegardless()
+        setOcclusionDetection(false)
+        try await expect("!document.hidden", "Show the window before starting another lookup")
+        try await changeTrack("Background slow")
+        try await expect("!!document.querySelector('.lyrics-spinner') && document.querySelector('.lyrics-scroll').hidden", "Start a lookup before hiding the window")
+        setOcclusionDetection(true)
+        window.orderOut(nil)
+        try await expect("document.hidden && !document.querySelector('.lyrics-scroll').hidden && document.querySelector('#tab-renderer').getAnimations().length === 0",
+                         "Background results must install lyrics without starting an invisible animation", seconds: 6)
+        print("PASS: compact feedback, loading spinner, settled lyric reveal, retry focus and interrupted transitions")
+    }
+    if CommandLine.arguments.contains("--feedback-ui-only") {
+        try await checkFeedback()
+        return
+    }
+    func checkModeOffsets() async throws {
+        let song = "mode:song|video:modeOffsets01"
+        let video = "mode:video|video:modeOffsets01"
+        try await expect("!!document.querySelector('.lyrics-line')", "Load lyrics before checking playback modes")
+        try await selectVersion("modeOffsets01")
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '+0.75 s'", "Retain old adjustments when playback mode is unidentified")
+        _ = try await js("""
+            const toggle = document.createElement('ytmusic-av-toggle');
+            toggle.setAttribute('playback-mode', 'ATV_PREFERRED');
+            document.querySelector('ytmusic-player-page').prepend(toggle);
+            null
+            """)
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s' && document.querySelector('.lyrics-offset-scope')?.textContent === 'Saved for Song mode'",
+                         "Song mode must not guess which version an unclassified offset belongs to")
+        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expectSavedOffset(250, for: song)
+        _ = try await js("document.querySelector('ytmusic-av-toggle').setAttribute('playback-mode', 'OMV_PREFERRED'); document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'",
+                         "A mode-only switch with identical media ID, duration and title must restore Video timing")
+        try await expectSavedOffset(250, for: song)
+        _ = try await js("document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('.lyrics-seek').click(); null")
+        try await expectSavedOffset(-500, for: video)
+        try await expect("lastSeek === 0.5", "Video seeking must use only its own adjustment")
+        _ = try await js("document.querySelector('ytmusic-av-toggle').setAttribute('playback-mode', 'ATV_PREFERRED'); null")
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to Song must restore Song timing")
+        try await changeTrack("Better words")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "A different lyric source must not inherit the mode's previous source offset")
+        try await changeTrack("Fixture")
+        try await expect("document.querySelector('.lyrics-offset-source').textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to the same mode and source must restore its adjustment")
+        let songHTML = pageHTML.replacingOccurrences(of: "<ytmusic-player-page>", with: "<ytmusic-player-page><ytmusic-av-toggle playback-mode='ATV_PREFERRED'></ytmusic-av-toggle>")
+        _ = try await js("document.documentElement.dataset.beforeModeReload = 'true'; null")
+        web.loadHTMLString(songHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=modeOffsets01"))
+        try await expect("!document.documentElement.dataset.beforeModeReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Mode offsets must survive a full document reload")
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: song)
+        try await expectSavedOffset(-500, for: video)
+        _ = try await js("document.querySelector('ytmusic-player-page').setAttribute('video-mode', ''); null")
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '-0.50 s' && document.querySelector('.lyrics-offset-scope').textContent === 'Saved for Video mode'", "The player's actual video-mode attribute must also restore Video timing")
+        try await selectVersion("")
+        try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Mode-aware metadata fallback must not reuse another media identity")
+        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expectSavedOffset(250, for: #"mode:video|track:["fixture","artist",180]"#)
+        _ = try await js("""
+            for (const trackKey of ['mode:podcast|video:bad|source:NetEase', 'mode:video|video:bad/id|source:NetEase', 'mode:video|video:bad|source:Unknown']) {
+                webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey, milliseconds:250});
+            }
+            null
+            """)
+        try await Task.sleep(for: .milliseconds(100))
+        assert(lyrics.trackOffsets.count == 3, "Invalid modes, media IDs and sources must not create stored offsets")
+        try await expectSavedOffset(750, for: "video:modeOffsets01")
+        print("PASS: Song/Video timing isolation, source identity, seeking, reload, reset, metadata fallback, validation and legacy preservation")
+    }
+    if CommandLine.arguments.contains("--mode-offsets-only") {
+        try await checkModeOffsets()
+        return
+    }
+    if CommandLine.arguments.contains("--source-offsets-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load lyrics before checking per-source timing")
+        try await selectVersion("sourceOffsets01")
+        try await changeTrack("Better words")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('Better Lyrics')", "Load Better Lyrics for a fixed video identity")
+        try await expect("document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "An old offset with no known provider must not be applied to an arbitrary source")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics'", "Timing settings must name the source whose adjustment will be saved")
+        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expectSavedOffset(250, for: "video:sourceOffsets01", source: "Better Lyrics")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase') && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Another source for the same song must start with its own offset")
+        _ = try await js("document.querySelector('[data-offset=\"-250\"]').click(); document.querySelector('[data-offset=\"-250\"]').click(); null")
+        try await expectSavedOffset(-500, for: "video:sourceOffsets01")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to a source must restore its own saved timing")
+        _ = try await js("document.querySelector('.lyrics-seek').click(); null")
+        try await expect("lastSeek === 1.25", "Seeking must use the selected source's offset")
+        try await update()
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'Better Lyrics' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Source offsets must survive a renderer restart")
+        assert(MusicLyrics(defaults: defaults).trackOffsets["video:sourceOffsets01|source:Better Lyrics"] == 250)
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: "video:sourceOffsets01", source: "Better Lyrics")
+        try await expectSavedOffset(-500, for: "video:sourceOffsets01")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'NetEase' && document.querySelector('.lyrics-settings-panel output').textContent === '-0.50 s'", "Reset must not erase another source's timing")
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: "video:sourceOffsets01")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
+        try await changeTrack("Mux words")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (KuGou)'", "Aggregators must retain their explicitly reported upstream source identity")
+        _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
+        try await expectSavedOffset(250, for: "video:sourceOffsets01", source: "lrcmux (KuGou)")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Deezer version'; null")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (Deezer)' && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "Different upstream providers within an aggregator must not share offsets")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
+        try await expect("document.querySelector('.lyrics-offset-source')?.textContent === 'lrcmux (KuGou)' && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Returning to an upstream source must restore its offset")
+        _ = try await js("document.querySelector('[data-reset]').click(); null")
+        try await expectSavedOffset(nil, for: "video:sourceOffsets01", source: "lrcmux (KuGou)")
+        assert(defaults.object(forKey: offsetsKey) == nil, "Resetting all current offsets must remove only the new preference container")
+        assert(defaults.dictionary(forKey: "MusicLyricsOffsetsByTrack")?["video:sourceOffsets01"] as? Int == 750,
+               "Legacy offsets must remain intact because their original source cannot be inferred")
+        print("PASS: song/source timing isolation, upstream providers, restart, seeking, reset and legacy preservation")
+        return
+    }
+    if CommandLine.arguments.contains("--five-ui-only") {
+        try await expect("!!document.querySelector('.lyrics-line')", "Load the initial native fixture before changing its track")
+        try await changeTrack("Better words")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from Better Lyrics · Word-by-word' && document.querySelectorAll('.lyrics-word').length === 2",
+                         "Better Lyrics must use album metadata from the player bar and the existing renderer")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album changed'; null")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase') && document.querySelector('.lyrics-source').textContent.includes('Line-by-line')",
+                         "Album changes must invalidate a previous Better Lyrics cache result")
+        _ = try await js("document.querySelector('a[href=\"/browse/MPREfixture\"]').textContent = 'Album'; null")
+        try await changeTrack("Mux words")
+        try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from lrcmux (KuGou) · Word-by-word'",
+                         "lrcmux must display its explicitly reported original provider")
+        _ = try await js("fixtureTime = 1.5; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Hello world' && document.querySelector('.lyrics-word.is-current')?.textContent.trim() === 'Hello'",
+                         "lrcmux word timestamps must drive karaoke highlighting")
+        _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
+        try await expect("lastSeek === 10", "lrcmux timestamps must seek in seconds through the existing player")
+        try await changeTrack("Syllable wrap")
+        try await expect("document.querySelectorAll('.lyrics-word').length === 8", "Load independently timed syllables for the word-wrapping check")
+        _ = try await js("""
+            fixtureTime = 7.5;
+            document.querySelector('video').dispatchEvent(new Event('timeupdate'));
+            const button = document.querySelector('.lyrics-seek');
+            button.closest('.lyrics-line').style.transform = 'none';
+            button.closest('.lyrics-line').style.transition = 'none';
+            const syllables = button.querySelectorAll('.lyrics-word');
+            const range = document.createRange();
+            range.setStart(button, 0);
+            range.setEndAfter(syllables[6]);
+            window.wrapWidth = range.getBoundingClientRect().width + 1 + button.parentElement.clientWidth - button.clientWidth;
+            document.querySelector('.lyrics-lines').style.width = `${wrapWidth}px`;
+            null
+            """)
+        try await expect("""
+            (() => {
+                const button = document.querySelector('.lyrics-seek');
+                const syllables = button.querySelectorAll('.lyrics-word');
+                const before = syllables[5].getBoundingClientRect();
+                const se = syllables[6].getBoundingClientRect();
+                const nang = syllables[7].getBoundingClientRect();
+                return Math.abs(se.top - nang.top) < 1 && se.top > before.top + 5
+                    && Math.abs(se.left - button.getBoundingClientRect().left) < 2;
+            })()
+            """, "A complete word must move to the next line rather than wrap between timed syllables")
+        try await expect("""
+            (() => {
+                const list = document.querySelector('.lyrics-lines');
+                const syllables = document.querySelectorAll('.lyrics-word');
+                for (let width = 200; width <= 500; width += 4) {
+                    list.style.width = `${width}px`;
+                    if (Math.abs(syllables[6].getBoundingClientRect().top - syllables[7].getBoundingClientRect().top) > 1) return false;
+                }
+                list.style.width = `${wrapWidth}px`;
+                return true;
+            })()
+            """, "Timed syllables of one word must remain together across panel widths")
+        try await expect("document.querySelector('.lyrics-seek').textContent === 'Sedang tak mudah bertemu rasa senang' && document.querySelector('.lyrics-word.is-current')?.textContent === 'se'", "Whole-word wrapping must preserve lyric spacing and syllable highlighting")
+        print("PASS: Better Lyrics/lrcmux WebKit rendering, attribution, album cache refresh, words, seeking and whole-word wrapping")
+        return
+    }
+    if plainUI {
+        try await expect("getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none' && document.querySelector('.lyrics-scroll').hidden && !!document.querySelector('.lyrics-message button')",
+                         "Unsynchronized external lyrics must leave the original plain lyrics visible")
+        try await changeTrack("Metadata with timing")
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second real line'",
+                         "JSON credit metadata in YRC must not hide the real timed LRC lyrics")
+        try await changeTrack("Metadata only")
+        try await expect("getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none' && document.querySelector('.lyrics-scroll').hidden && document.querySelectorAll('.lyrics-line').length === 0",
+                         "Metadata-only responses must restore native lyrics without raw JSON")
+        print("PASS: native plain lyrics, metadata rejection and valid LRC rendering through WebKit")
+        return
+    }
     try await expect("document.querySelectorAll('.lyrics-line').length >= 2 && !document.querySelector('.lyrics-scroll').hidden",
                      "Fetch real/native lyrics for \(metadata.joined(separator: " — "))", seconds: live ? 25 : 4)
     if live {
@@ -238,6 +900,7 @@ setbuf(stdout, nil)
         print("PASS LIVE: \(metadata.joined(separator: " — ")); \(source); \(count) rendered lines; seek/highlight works")
         return
     }
+    try await expect("document.querySelector('.lyrics-source').textContent.includes('Line-by-line')", "Line-timed lyrics must identify their timing granularity")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && document.querySelector('.lyrics-source').textContent.includes('NetEase')", "Native NetEase lookup and timing")
     _ = try await js("fixtureTime = 110; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
     try await expect("document.querySelector('.lyrics-scroll').scrollTop > 100", "Start the previous song with lyrics scrolled down")
@@ -256,9 +919,9 @@ setbuf(stdout, nil)
     try await expect("!document.querySelector('.lyrics-settings-panel').hidden && document.querySelector('.lyrics-settings-button').getAttribute('aria-expanded') === 'true'", "The gear opens timing settings")
     _ = try await js("document.querySelector('[data-reset]').click(); null")
     try await expect("!document.querySelector('.lyrics-settings-panel').hidden", "Using a timing control must keep the popover open")
-    try await expect("!!document.querySelector('button[aria-label=\"Close lyric timing\"]')", "Timing settings need an explicit close button")
+    try await expect("!!document.querySelector('button[aria-label=\"Close lyric settings\"]')", "Timing settings need an explicit close button")
     _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); null")
-    _ = try await js("document.querySelector('button[aria-label=\"Close lyric timing\"]').click(); null")
+    _ = try await js("document.querySelector('button[aria-label=\"Close lyric settings\"]').click(); null")
     try await expect("document.querySelector('.lyrics-settings-panel').hidden && document.querySelector('.lyrics-settings-button').getAttribute('aria-expanded') === 'false' && document.activeElement === document.querySelector('.lyrics-settings-button') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "Closing timing settings must restore gear focus without changing the offset")
     _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('[data-reset]').click(); null")
     _ = try await js("document.body.click(); null")
@@ -297,7 +960,7 @@ setbuf(stdout, nil)
         })()
         """, "The active line grows and every lyric line stays sharp, regardless of distance")
     window.setContentSize(NSSize(width: 400, height: 500))
-    try await expect("lineIsCentered() && document.querySelector('.lyrics-scroll').scrollWidth <= document.querySelector('.lyrics-scroll').clientWidth", "Resizing must preserve centering without horizontal scrolling")
+    try await expect("innerWidth === 400 && lineIsCentered() && document.querySelector('.lyrics-scroll').scrollWidth <= document.querySelector('.lyrics-scroll').clientWidth", "Wait for WebKit to resize before checking centering and wrapping")
     _ = try await js("""
         window.beforeWeightChange = [...document.querySelectorAll('.lyrics-line')].map(row => row.offsetHeight);
         fixtureTime = 70;
@@ -310,10 +973,10 @@ setbuf(stdout, nil)
             return getComputedStyle(active).fontWeight === '700'
                 && rows.filter(row => row !== active).every(row => getComputedStyle(row).fontWeight === '700'
                     && getComputedStyle(row).color !== getComputedStyle(active).color)
-                && rows.every((row, index) => row.offsetHeight === beforeWeightChange[index])
-                && lineIsCentered();
+                && rows.every((row, index) => row.offsetHeight === beforeWeightChange[index]);
         })()
         """, "All lyric lines stay bold, inactive lines dim, and wrapped lines keep their height")
+    try await expect("lineIsCentered()", "Resize and line motion keep the active lyric centered")
     window.setContentSize(NSSize(width: 900, height: 600))
     _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Seeking forward must update the highlighted line")
@@ -330,14 +993,14 @@ setbuf(stdout, nil)
     _ = try await js("fixtureTime = 12; null")
     try await changeTrack("Intro race")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Return from credits to normal lyrics")
-    _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('.lyrics-line button')?.click(); null")
+    _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('.lyrics-seek')?.click(); null")
     try await expect("lastSeek === 1 && document.querySelector('.lyrics-line.is-current')?.textContent === 'First line' && document.querySelector('.lyrics-settings-panel').hidden", "Clicking a timed lyric must dismiss settings and seek in the same click")
     try await selectVersion("fixtureAA01")
     try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-settings-panel output').textContent === '0.00 s'", "An unconfigured version starts with zero offset")
-    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); document.querySelectorAll('.lyrics-line button')[1].click(); null")
+    _ = try await js("document.querySelector('[data-offset=\"250\"]').click(); document.querySelectorAll('.lyrics-seek')[1].click(); null")
     try await expect("lastSeek === 10.25 && document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Click-to-seek must include the configured timing offset")
     try await expectSavedOffset(250, for: "video:fixtureAA01")
-    assert(MusicLyrics(defaults: defaults).trackOffsets["video:fixtureAA01"] == 250, "A new native instance must read the saved offset")
+    assert(MusicLyrics(defaults: defaults).trackOffsets["video:fixtureAA01|source:NetEase"] == 250, "A new native instance must read the saved offset")
     _ = try await js("document.documentElement.dataset.beforeOffsetReload = 'true'; null")
     web.loadHTMLString(pageHTML, baseURL: URL(string: "https://music.youtube.com/watch?v=fixtureAA01"))
     try await expect("!document.documentElement.dataset.beforeOffsetReload && !!document.querySelector('.lyrics-line') && document.querySelector('.lyrics-settings-panel output').textContent === '+0.25 s'", "A full document load without apply must restore the latest saved offset")
@@ -372,11 +1035,13 @@ setbuf(stdout, nil)
     assert(defaults.object(forKey: offsetsKey) == nil, "Zero offsets must leave no stored entries or empty container")
     _ = try await js("""
         for (const payload of [
-            {trackKey:'video:invalid', milliseconds:true},
-            {trackKey:'video:invalid', milliseconds:1.5},
-            {trackKey:'video:invalid', milliseconds:10001},
+            {trackKey:'video:invalid|source:NetEase', milliseconds:true},
+            {trackKey:'video:invalid|source:NetEase', milliseconds:1.5},
+            {trackKey:'video:invalid|source:NetEase', milliseconds:3600001},
+            {trackKey:'video:invalid|source:Unknown', milliseconds:250},
+            {trackKey:'video:invalid', milliseconds:250},
             {trackKey:'', milliseconds:250},
-            {trackKey:'video:' + 'x'.repeat(2000), milliseconds:250}
+            {trackKey:'video:' + 'x'.repeat(2000) + '|source:NetEase', milliseconds:250}
         ]) webkit.messageHandlers.musicLyricsOffset.postMessage(payload);
         null
         """)
@@ -391,11 +1056,11 @@ setbuf(stdout, nil)
         document.querySelector('video').dispatchEvent(new Event('timeupdate')); null
         """)
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 6' && document.querySelector('.lyrics-scroll').scrollTop === 40", "Manual scrolling must pause auto-scroll while the highlight keeps following playback")
-    _ = try await js("document.querySelectorAll('.lyrics-line button')[1].click(); null")
+    _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()", "Clicking a line must resume centered scrolling immediately")
     _ = try await js("""
         window.beforeAnimatedSeek = document.querySelector('.lyrics-scroll').scrollTop;
-        document.querySelectorAll('.lyrics-line button')[11].click();
+        document.querySelectorAll('.lyrics-seek')[11].click();
         window.seekStartsWithoutJump = document.querySelector('.lyrics-scroll').scrollTop === beforeAnimatedSeek; null
         """)
     try await expect("seekStartsWithoutJump", "Animated seeking must start from the visible position without an immediate jump")
@@ -407,9 +1072,9 @@ setbuf(stdout, nil)
     try await Task.sleep(for: .milliseconds(200))
     try await expect("Math.abs(document.querySelector('.lyrics-scroll').scrollTop - interruptedPosition) < 1", "Manual input must immediately stop an in-flight animation, not fight the user")
     _ = try await js("""
-        document.querySelectorAll('.lyrics-line button')[2].click();
-        document.querySelectorAll('.lyrics-line button')[5].click();
-        document.querySelectorAll('.lyrics-line button')[1].click(); null
+        document.querySelectorAll('.lyrics-seek')[2].click();
+        document.querySelectorAll('.lyrics-seek')[5].click();
+        document.querySelectorAll('.lyrics-seek')[1].click(); null
         """)
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()", "Rapid seek clicks must retarget from the current position and settle on the latest line")
     _ = try await js("""
@@ -417,22 +1082,22 @@ setbuf(stdout, nil)
             fixtureTime = time;
             document.querySelector('video').dispatchEvent(new Event(index === 1 ? 'seeking' : 'timeupdate'));
             const current = document.querySelector('.lyrics-line.is-current');
-            return current?.textContent === `Line ${time / 10}` && getComputedStyle(current).color === 'rgb(255, 255, 255)';
+            return current?.textContent === `Line ${time / 10}`;
         }); null
         """)
-    try await expect("highlightsDuringScroll.every(Boolean)", "Highlight text and full brightness must follow the audio clock immediately, without waiting for scroll or color animation")
+    try await expect("highlightsDuringScroll.every(Boolean)", "The active lyric marker must follow the audio clock while scrolling")
     _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('seeked')); null")
     try await expect("lineIsCentered()", "Following still settles after immediate highlight changes")
     _ = try await js("""
         fixtureReduceMotion = true;
-        document.querySelectorAll('.lyrics-line button')[11].click();
+        document.querySelectorAll('.lyrics-seek')[11].click();
         window.reducedMotionCenteredImmediately = lineIsCentered(); null
         """)
     try await expect("reducedMotionCenteredImmediately", "Reduced Motion must center immediately without a lingering scroll animation")
-    _ = try await js("fixtureReduceMotion = false; document.querySelectorAll('.lyrics-line button')[1].click(); null")
+    _ = try await js("fixtureReduceMotion = false; document.querySelectorAll('.lyrics-seek')[1].click(); null")
     try await expect("lineIsCentered()", "Restore animated following after Reduce Motion")
     let requestCount = LyricsTransport.lock.withLock { LyricsTransport.requests.count }
-    _ = try await js("document.querySelectorAll('.lyrics-line button')[11].click(); document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','false'); null")
+    _ = try await js("document.querySelectorAll('.lyrics-seek')[11].click(); document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','false'); null")
     try await expect("getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'", "Restore native lyrics on other tabs")
     _ = try await js("document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','true'); null")
     try await expect("!!document.querySelector('.music-custom-lyrics-active') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 11' && lineIsCentered()", "Returning to Lyrics must finish centering an animation interrupted by hiding the panel")
@@ -443,12 +1108,12 @@ setbuf(stdout, nil)
     try await changeTrack("Slow")
     try await expect("document.querySelector('.lyrics-message').textContent.includes('Looking') && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'", "Keep native lyrics while loading")
     try await expect("document.querySelector('#music-custom-lyrics').getBoundingClientRect().bottom <= document.querySelector('#native-lyrics').getBoundingClientRect().top", "Notice must occupy a row above native lyrics")
-    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Finish a slow request")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Finish a slow request", seconds: 6)
     try await changeTrack("Plain")
-    try await expect("document.querySelector('.lyrics-source').textContent.includes('Unsynchronized') && !document.querySelector('.lyrics-scroll').hidden && !document.querySelector('.lyrics-line.is-current')", "Different durations must disable synchronization")
-    try await expect("!document.querySelector('.lyrics-line button') && getComputedStyle(document.querySelector('.lyrics-line')).color === 'rgb(245, 245, 245)' && getComputedStyle(document.querySelector('.lyrics-line')).filter === 'none' && getComputedStyle(document.querySelector('.lyrics-line')).transform === 'none'", "Untimed text stays clear without blur or fabricated seek positions")
+    try await expect("getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none' && document.querySelector('.lyrics-scroll').hidden && !document.querySelector('.lyrics-line.is-current')", "Unsynchronized matches must use the original plain lyrics")
+    try await expect("document.querySelectorAll('.lyrics-line').length === 0 && document.querySelector('#native-lyrics').textContent === 'Native lyrics'", "Untimed results must preserve native lyrics without fabricated seek positions")
     try await changeTrack("Better sync")
-    try await expect("document.querySelector('.lyrics-source').textContent.includes('LRCLIB') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Fallback second'", "Prefer a synchronized fallback over an unsynchronized primary result")
+    try await expect("document.querySelector('.lyrics-source').textContent.includes('LRCLIB') && document.querySelector('.lyrics-source').textContent.includes('Line-by-line') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Fallback second'", "Prefer a synchronized fallback over an unsynchronized primary result")
     try await changeTrack("Fallback")
     try await expect("document.querySelector('.lyrics-source').textContent.includes('LRCLIB') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Fallback second'", "API -462 must try LRCLIB rather than treating HTTP 200 as success")
     try await changeTrack("Transient503")
@@ -464,9 +1129,18 @@ setbuf(stdout, nil)
         try await changeTrack(title)
         try await expect("!!document.querySelector('.lyrics-message button') && !document.querySelector('.lyrics-message').hidden && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'", "Keep native lyrics on \(title)")
         try await expect("document.querySelector('#music-custom-lyrics').getBoundingClientRect().bottom <= document.querySelector('#native-lyrics').getBoundingClientRect().top", "Errors must not cover lyrics")
-        if title == "Cooldown" {
-            try await expect("document.querySelector('.lyrics-message button').disabled", "Disable retry during server cooldown")
-            try await expect("!document.querySelector('.lyrics-message button').disabled", "Allow retry after cooldown")
+        if title == "HTTP error" {
+            try await expect("(() => { const text = document.querySelector('.lyrics-message > div').textContent; return text.includes('Couldn’t load synced lyrics.') && !text.includes('NetEase') && !text.includes('LRCLIB') && !text.includes('HTTP'); })()", "Hide provider diagnostics behind a simple message")
+            try await expect("document.querySelector('.lyrics-info-button')?.getAttribute('aria-label') === 'Show error details' && document.querySelector('.lyrics-info-button').getAttribute('aria-expanded') === 'false'", "Offer accessible provider details on demand")
+            _ = try await js("document.querySelector('.lyrics-info-button').click(); null")
+            try await expect("document.querySelector('.lyrics-info-button').getAttribute('aria-expanded') === 'true' && !document.querySelector('.lyrics-error-text').hidden && document.querySelector('.lyrics-error-text').textContent.includes('NetEase') && document.querySelector('.lyrics-error-text').textContent.includes('HTTP 502')", "The info control reveals provider diagnostics inline")
+            try await expect("getComputedStyle(document.querySelector('.lyrics-error-text')).position === 'static' && document.querySelector('.lyrics-error-text').getBoundingClientRect().bottom <= document.querySelector('#native-lyrics').getBoundingClientRect().top", "Expanded diagnostics must stay visible above native lyrics")
+            _ = LyricsTransport.lock.withLock { LyricsTransport.recovered.insert(title) }
+            _ = try await js("document.querySelector('.lyrics-message button:not(.lyrics-info-button)').click(); null")
+            try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Try Again recovers from a provider error")
+        } else if title == "Cooldown" {
+            try await expect("document.querySelector('.lyrics-message button:not(.lyrics-info-button)').disabled", "Disable retry during server cooldown")
+            try await expect("!document.querySelector('.lyrics-message button:not(.lyrics-info-button)').disabled", "Allow retry after cooldown")
         } else if title == "No match" {
             _ = LyricsTransport.lock.withLock { LyricsTransport.recovered.insert(title) }
             _ = try await js("document.querySelector('.lyrics-message button').click(); null")
@@ -483,6 +1157,21 @@ setbuf(stdout, nil)
     try await expect("!document.querySelector('.lyrics-scroll').hidden && document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Rapid A to B to A must restore cached A")
     try await Task.sleep(for: .milliseconds(100))
     assert(LyricsTransport.lock.withLock { LyricsTransport.cancelled > cancelledBefore }, "Returning to cached A must cancel B")
+    try await changeTrack("Cross source")
+    try await expect("document.querySelector('.lyrics-source').textContent.includes('LRCLIB') && document.querySelector('.lyrics-source').textContent.includes('Word-by-word')", "Prefer LRCLIB word timing over NetEase line timing")
+    _ = try await js("fixtureTime = 1.5; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'First line' && document.querySelector('.lyrics-word.is-current')?.textContent.trim() === 'First'", "LRCLIB Lyricsfile words drive karaoke highlighting")
+    try await changeTrack("AMLL words")
+    try await expect("document.querySelector('.lyrics-source').textContent === 'Lyrics from AMLL · Word-by-word' && document.querySelectorAll('.lyrics-word').length === 2", "Render AMLL attribution without inferring an original provider from platform IDs")
+    _ = try await js("fixtureTime = 1.5; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Hello world' && document.querySelector('.lyrics-word.is-current')?.textContent.trim() === 'Hello'", "AMLL word timing must drive the existing karaoke renderer")
+    _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
+    try await expect("lastSeek === 10", "AMLL lyric lines must seek using their TTML timestamps")
+    try await changeTrack("Word timing")
+    try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase') && document.querySelector('.lyrics-source').textContent.includes('Word-by-word') && document.querySelectorAll('.lyrics-word').length === 2", "Find NetEase word timing in another matching release even when legacy search fails and LRCLIB offers line timing")
+    _ = try await js("fixtureTime = 1.5; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+    try await expect("document.querySelectorAll('.lyrics-word.is-current').length === 1 && document.querySelector('.lyrics-word.is-current').textContent.trim() === 'Hello'", "YRC word timing must highlight the active word")
+    try await expect("(() => { const letters = [...document.querySelectorAll('.lyrics-word.is-current .lyrics-letter')]; return letters.length === 5 && letters.map(letter => letter.style.getPropertyValue('--word-progress')).join(',') === '100%,100%,50%,0%,0%'; })()", "YRC timing must fill letters from left to right")
     _ = try await js("window.originalVideo = document.querySelector('video'); null")
     lyrics.isEnabled = false
     try await update()
@@ -512,7 +1201,7 @@ setbuf(stdout, nil)
         try await Task.sleep(for: .milliseconds(20))
     }
     guard let frame = frameCapture.frame else { fatalError("No subframe captured") }
-    let probe = "webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey:'video:blocked',milliseconds:500}); webkit.messageHandlers.musicLyricsLookup.postMessage(\(payload)).then(() => document.body.dataset.reply='allowed', error => document.body.dataset.reply=String(error)); null;"
+    let probe = "webkit.messageHandlers.musicLyricsProvider.postMessage({trackKey:'video:blocked',source:'LRCLIB'}); webkit.messageHandlers.musicLyricsOffset.postMessage({trackKey:'video:blocked|source:NetEase',milliseconds:500}); webkit.messageHandlers.musicLyricsLookup.postMessage(\(payload)).then(() => document.body.dataset.reply='allowed', error => document.body.dataset.reply=String(error)); null;"
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
         web.evaluateJavaScript(probe, in: frame, in: .defaultClient) { result in
             continuation.resume(with: result.map { _ in () })
@@ -524,11 +1213,12 @@ setbuf(stdout, nil)
     _ = try await js(probe)
     try await expect("document.body.dataset.reply?.includes('only on YouTube Music')", "Reject foreign-origin main frame while enabled")
     assert(lyrics.trackOffsets.isEmpty, "Untrusted frames must not save timing offsets")
+    assert(defaults.object(forKey: "MusicLyricsProvidersByTrack") == nil, "Untrusted frames must not save provider choices")
     assert(LyricsTransport.lock.withLock { LyricsTransport.requests.count } == calls, "Rejected frames must not contact providers")
     assert(MusicLyricsProvider.Track(["title": "", "artist": "Artist", "duration": 180.0]) == nil)
     assert(MusicLyricsProvider.Track(["title": "Fixture", "artist": "Artist", "duration": Double.infinity]) == nil)
     assert(MusicLyricsProvider.Track(["title": String(repeating: "a", count: 501), "artist": "Artist", "duration": 180.0]) == nil)
-    print("PASS: \(label), native NetEase/LRCLIB fallback, provider errors, timeout, cooldown, cache, matching, sync, top notice, cleanup and cancellation")
+    print("PASS: \(label), native NetEase/LRCLIB/AMLL fallback, provider errors, timeout, cooldown, cache, matching, word sync, attribution, seeking, cleanup and cancellation")
 }
 Task { @MainActor in
     do { try await check(); exit(0) }

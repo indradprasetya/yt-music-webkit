@@ -189,6 +189,7 @@ with tempfile.TemporaryDirectory(prefix="music-custom-icon-check-") as directory
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5", str(root / "Music/MusicAppIcons.swift"),
                     str(root / "Music/MusicSettings.swift"), str(root / "Music/MusicExtensions.swift"), str(root / "Music/MusicScripts.swift"),
                     str(root / "Music/MusicLyrics.swift"), str(root / "Music/MusicLyricsProvider.swift"),
+                    str(root / "Music/MusicTTML.swift"),
                     str(script), "-o", str(binary)], check=True, env=env)
     subprocess.run(["codesign", "--sign", "-", str(app.parent)], check=True, capture_output=True)
     command = [str(binary), str(work), str(root / "Music/icon.icns"), str(root / "Music/icon-dark.icns"),

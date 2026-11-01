@@ -154,7 +154,7 @@ RunLoop.main.run()
 ''')
     binary = work / "check-settings"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5",
-                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicScripts", "MusicLyrics", "MusicLyricsProvider", "MusicSettings")],
+                    *[str(root / f"Music/{name}.swift") for name in ("MusicAppIcons", "MusicExtensions", "MusicScripts", "MusicLyrics", "MusicLyricsProvider", "MusicTTML", "MusicSettings")],
                     str(source), "-o", str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
     subprocess.run([str(binary), str(work)], check=True, timeout=20)

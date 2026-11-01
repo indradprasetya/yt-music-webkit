@@ -390,15 +390,16 @@ final class MusicSettings: NSWindowController {
         let usageTitle = groupTitle("Using lyrics")
         let usage = bullets([
             "Click a timed line to jump to that part of the song.",
-            "Use the gear button in Lyrics to adjust timing for the current song.",
-            "When synced lyrics aren’t available, plain lyrics are shown."
+            "Hover over a line and click its sync button when the vocals begin to align lyric timing.",
+            "Use the gear to choose a provider or adjust timing. Choices are saved for this song and playback mode.",
+            "When synced lyrics aren’t available, the original YouTube Music lyrics are shown."
         ])
         let privacyTitle = groupTitle("Privacy & storage")
         let privacy = bullets([
-            "When enabled, song titles and artists are sent to NetEase Cloud Music, with LRCLIB as a fallback.",
+            "NetEase, LRCLIB, AMLL, Better Lyrics, and lrcmux receive song details to find lyrics.",
             "Providers receive your IP address. Your YouTube account cookies aren’t shared.",
             "Lyrics stay in memory and aren’t saved to disk.",
-            "Only nonzero offsets and song IDs are saved locally. Reset to 0 to remove a saved offset."
+            "Timing adjustments and provider choices stay on this Mac. Reset clears timing; Automatic clears the provider choice."
         ])
 
         let content = NSStackView(views: [header, toggle, hint, usageTitle, usage, privacyTitle, privacy, status])
