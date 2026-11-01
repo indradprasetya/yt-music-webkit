@@ -22,6 +22,24 @@ final class MusicTTML: NSObject, XMLParserDelegate {
     private var words: [Word] = []
     private var lines: [[String: Any]] = []
     private var plain: [String] = []
+    private var lineKey = ""
+    private var translations: [String: String] = [:]
+    private var pronunciation = ""
+    private var pronunciationWords: [[String: Any]] = []
+    private var trackDepth: Int?
+    private var trackKind = ""
+    private var trackLanguage = ""
+    private var auxiliaryDepth: Int?
+    private var auxiliaryKind = ""
+    private var auxiliaryLanguage = ""
+    private var auxiliaryKey: String?
+    private var auxiliaryText = ""
+    private var auxiliaryWords: [Word] = []
+    private var auxiliaryWordDepth: Int?
+    private var invalidAuxiliaryWords = false
+    private var headerTranslations: [String: [String: String]] = [:]
+    private var headerPronunciations: [String: String] = [:]
+    private var headerPronunciationWords: [String: [[String: Any]]] = [:]
 
     private init(duration: Double) {
         limit = Int((duration + 2) * 1000)
@@ -68,15 +86,44 @@ final class MusicTTML: NSObject, XMLParserDelegate {
             return
         }
         if name == "body" { bodyDepth = depth }
-        guard bodyDepth != nil, skippedDepth == nil else { return }
+        guard skippedDepth == nil else { return }
         let role = attributes.first { $0.key == "role" || $0.key.hasSuffix(":role") }?.value
         let ruby = attributes.first { $0.key == "ruby" || $0.key.hasSuffix(":ruby") }?.value
-        // shortcut: the current renderer shows main vocals only; add separate auxiliary rows when supported.
-        if ["x-translation", "x-roman", "x-bg"].contains(role ?? "")
+        let language = attributes["xml:lang"] ?? attributes["lang"] ?? "und"
+        if role == "x-bg"
             || ["text", "textContainer", "delimiter"].contains(ruby ?? "") || name == "rt" {
             skippedDepth = depth
             return
         }
+        if auxiliaryDepth != nil {
+            if auxiliaryKind == "pronunciation", name == "span", auxiliaryWordDepth == nil,
+               attributes["begin"] != nil || attributes["end"] != nil {
+                guard auxiliaryWords.count < 2_000 else { parser.abortParsing(); return }
+                if let begin = milliseconds(attributes["begin"]), let finish = milliseconds(attributes["end"]), finish > begin {
+                    auxiliaryWords.append(Word(start: begin, end: finish))
+                    auxiliaryWordDepth = depth
+                } else { invalidAuxiliaryWords = true }
+            } else if name == "br" { appendAuxiliary(" ") }
+            return
+        }
+        if bodyDepth == nil, ["translation", "transliteration"].contains(name) {
+            trackDepth = depth
+            trackKind = name
+            trackLanguage = language
+        }
+        if (lineDepth != nil && ["x-translation", "x-roman"].contains(role ?? ""))
+            || (bodyDepth == nil && trackDepth != nil && name == "text" && attributes["for"] != nil) {
+            auxiliaryDepth = depth
+            auxiliaryKind = role == "x-roman" || trackKind == "transliteration" ? "pronunciation" : "translation"
+            auxiliaryLanguage = lineDepth != nil ? language : trackLanguage
+            auxiliaryKey = lineDepth == nil ? attributes["for"] : nil
+            auxiliaryText = ""
+            auxiliaryWords = []
+            auxiliaryWordDepth = nil
+            invalidAuxiliaryWords = false
+            return
+        }
+        guard bodyDepth != nil else { return }
         // AMLL p/span clocks are absolute, including inside a div with a nonzero begin.
         if attributes["timeContainer"] == "seq" {
             parser.abortParsing()
@@ -86,6 +133,10 @@ final class MusicTTML: NSObject, XMLParserDelegate {
             guard lineDepth == nil, plain.count < 5_000 else { parser.abortParsing(); return }
             lineDepth = depth
             text = ""
+            lineKey = attributes["itunes:key"] ?? attributes["key"] ?? ""
+            translations = [:]
+            pronunciation = ""
+            pronunciationWords = []
             words = []
             wordDepth = nil
             start = milliseconds(attributes["begin"])
@@ -107,8 +158,10 @@ final class MusicTTML: NSObject, XMLParserDelegate {
     }
 
     func parser(_ parser: XMLParser, foundCharacters string: String) {
-        guard lineDepth != nil, skippedDepth == nil else { return }
+        guard skippedDepth == nil else { return }
         if string.contains("\n"), string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        if auxiliaryDepth != nil { appendAuxiliary(string); return }
+        guard lineDepth != nil else { return }
         append(string)
     }
 
@@ -124,10 +177,47 @@ final class MusicTTML: NSObject, XMLParserDelegate {
         if !words.isEmpty { words[words.count - 1].text += string }
     }
 
+    private func appendAuxiliary(_ string: String) {
+        auxiliaryText += string
+        if auxiliaryWordDepth != nil { auxiliaryWords[auxiliaryWords.count - 1].text += string }
+        else if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { invalidAuxiliaryWords = true }
+        else if !auxiliaryWords.isEmpty { auxiliaryWords[auxiliaryWords.count - 1].text += string }
+    }
+
     func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
         defer { depth -= 1 }
         if skippedDepth == depth { skippedDepth = nil; return }
         guard skippedDepth == nil else { return }
+        if auxiliaryWordDepth == depth { auxiliaryWordDepth = nil }
+        if auxiliaryDepth == depth {
+            let value = auxiliaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !auxiliaryWords.isEmpty {
+                auxiliaryWords[0].text = auxiliaryWords[0].text.replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression)
+                let last = auxiliaryWords.count - 1
+                auxiliaryWords[last].text = auxiliaryWords[last].text.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+            }
+            var previous = -1
+            let valid = !invalidAuxiliaryWords && auxiliaryWords.map(\.text).joined() == value && auxiliaryWords.allSatisfy {
+                defer { previous = $0.start }
+                return $0.start >= previous
+            }
+            let timed: [[String: Any]] = valid ? auxiliaryWords.map {
+                ["word": $0.text, "start_time": $0.start, "end_time": $0.end]
+            } : []
+            if !value.isEmpty {
+                if let key = auxiliaryKey {
+                    if auxiliaryKind == "pronunciation" {
+                        headerPronunciations[key] = value
+                        headerPronunciationWords[key] = timed
+                    }
+                    else { headerTranslations[key, default: [:]][auxiliaryLanguage] = value }
+                } else if auxiliaryKind == "pronunciation" { pronunciation = value; pronunciationWords = timed }
+                else { translations[auxiliaryLanguage] = value }
+            }
+            auxiliaryDepth = nil
+            return
+        }
+        if trackDepth == depth { trackDepth = nil; trackKind = "" }
         if wordDepth == depth { wordDepth = nil }
         if lineDepth == depth {
             lineDepth = nil
@@ -149,7 +239,16 @@ final class MusicTTML: NSObject, XMLParserDelegate {
             let timedWords: [[String: Any]] = valid ? words.map {
                 ["word": $0.text, "start_time": $0.start, "end_time": $0.end]
             } : []
-            lines.append(["time": begin, "text": value, "words": timedWords, "credit": false])
+            var line: [String: Any] = ["time": begin, "text": value, "words": timedWords, "credit": false]
+            let translated = (headerTranslations[lineKey] ?? [:]).merging(translations) { _, inline in inline }
+            let romanized = pronunciation.isEmpty ? headerPronunciations[lineKey] ?? "" : pronunciation
+            let romanizedWords = pronunciation.isEmpty ? headerPronunciationWords[lineKey] ?? [] : pronunciationWords
+            if !translated.isEmpty { line["translations"] = translated }
+            if !romanized.isEmpty { line["pronunciation"] = romanized }
+            if !romanizedWords.isEmpty, romanizedWords.allSatisfy({
+                ($0["start_time"] as? Int ?? -1) >= begin && ($0["end_time"] as? Int ?? Int.max) <= finish
+            }) { line["pronunciationWords"] = romanizedWords }
+            lines.append(line)
         }
         if bodyDepth == depth { bodyDepth = nil }
     }

@@ -54,6 +54,26 @@ final class LyricsTransport: URLProtocol {
             if title == "Better miss" || (title == "Better words" && parameter("al") != "Album") {
                 status = 401
                 body = ["error": "API key required", "message": "Uncached queries require a valid API key"]
+            } else if title == "Pronunciation generated" {
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='5'><span begin='1' end='3'>夜</span><span begin='3' end='5'>だ</span></p></body></tt>"]
+            } else if title == "Pronunciation layout" {
+                var lines = ""
+                for index in 0..<12 {
+                    let start = index * 10 + 1
+                    let end = start + 8
+                    lines += "<p begin='\(start)' end='\(end)'>夜の街を一緒に歩こう</p>"
+                }
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body>\(lines)</body></tt>"]
+            } else if title == "Latin demo" {
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='5'><span begin='1' end='5'>Café déjà vu 👩‍🎤 123</span></p></body></tt>"]
+            } else if title == "Language demo" {
+                body = ["ttml": """
+                <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body>
+                <p begin="1" end="8"><span begin="1" end="8">明日は晴れる</span><span ttm:role="x-roman" xml:lang="ja-Latn">ashita wa hareru</span><span ttm:role="x-translation" xml:lang="id">Besok langit akan cerah</span><span ttm:role="x-translation" xml:lang="en">Tomorrow will be sunny</span></p>
+                <p begin="10" end="18"><span begin="10" end="18">함께 걸어요</span><span ttm:role="x-roman" xml:lang="ko-Latn"><span begin="10" end="14">hamkke </span><span begin="14" end="18">georeoyo</span></span><span ttm:role="x-translation" xml:lang="id">Mari berjalan bersama</span><span ttm:role="x-translation" xml:lang="en">Let us walk together</span></p>
+                <p begin="20" end="28"><span begin="20" end="28">一起看星星</span><span ttm:role="x-roman" xml:lang="zh-Latn">yì qǐ kàn xīng xing</span><span ttm:role="x-translation" xml:lang="id">Bersama melihat bintang</span><span ttm:role="x-translation" xml:lang="en">Watch the stars together</span></p>
+                </body></tt>
+                """]
             } else if title == "Syllable wrap" {
                 let parts = ["Sedang ", "tak ", "mudah ", "bertemu ", "ra", "sa ", "se", "nang"]
                 let spans = parts.enumerated().map { "<span begin='\($0.offset + 1)' end='\($0.offset + 2)'>\($0.element)</span>" }.joined()
@@ -267,6 +287,109 @@ app.setActivationPolicy(.accessory)
 app.finishLaunching()
 setbuf(stdout, nil)
 
+@MainActor func checkPronunciationScrolling(
+    js: (String) async throws -> Any?,
+    expect: (String, String) async throws -> Void,
+    changeTrack: (String) async throws -> Void,
+    snapshot: (String) async throws -> Void
+) async throws {
+    try await expect("!!document.querySelector('.lyrics-pronunciation-button')", "Load pronunciation controls before testing layout")
+    try await changeTrack("Pronunciation layout")
+    try await expect("document.querySelectorAll('.lyrics-line').length === 12 && !document.querySelector('.lyrics-pronunciation-button').hidden", "Load a scrollable non-Latin song")
+    _ = try await js("""
+            document.body.style.cssText = 'margin:0;background:#1d2228;color:white;font-family:-apple-system,BlinkMacSystemFont,sans-serif';
+            document.querySelector('ytmusic-player-bar').style.cssText = 'display:block;padding:24px;font-size:18px;font-weight:600';
+            document.querySelector('.byline').style.cssText = 'display:block;font-size:13px;font-weight:400;margin-top:6px';
+            document.querySelector('video').style.display = 'none';
+            document.querySelector('ytmusic-player-page').style.display = 'block';
+            document.querySelector('#tab-renderer').style.cssText = 'height:400px;width:280px;margin:0 auto';
+            document.querySelector('[role=tablist]').style.cssText = 'display:flex;justify-content:center;gap:24px;padding:12px';
+        fixtureTime = 52;
+        document.querySelector('video').dispatchEvent(new Event('timeupdate'));
+        window.languageHandler = webkit.messageHandlers.musicLyricsLanguage;
+        window.originalLanguagePost = languageHandler.postMessage.bind(languageHandler);
+        languageHandler.postMessage = message => message.action === 'pronunciation'
+            ? new Promise(resolve => { window.pendingPronunciation = resolve; }) : originalLanguagePost(message);
+        window.pronunciationEntries = Array.from({length:12}, () => ({text:'yoru no machi o issho ni arukou '.repeat(3), words:[]}));
+        window.observeLyricPosition = node => {
+                cancelAnimationFrame(window.positionFrame || 0);
+            window.readingAnchor = node;
+            const top = node.getBoundingClientRect().top;
+            window.lyricDrift = 0;
+            window.observeUntil = performance.now() + 700;
+            const sample = () => {
+                lyricDrift = Math.max(lyricDrift, Math.abs(node.getBoundingClientRect().top - top));
+                    if (performance.now() < observeUntil) window.positionFrame = requestAnimationFrame(sample);
+            };
+                window.positionFrame = requestAnimationFrame(sample);
+        };
+        null;
+        """)
+    try await expect("lineIsCentered()", "Center the original lyric before toggling")
+    _ = try await js("observeLyricPosition(document.querySelector('.lyrics-line.is-current .lyrics-seek')); document.querySelector('.lyrics-pronunciation-button').click(); null")
+    try await expect("!!window.pendingPronunciation", "Hold the generated pronunciation to exercise delayed layout")
+    _ = try await js("observeLyricPosition(readingAnchor); pendingPronunciation({lines:pronunciationEntries}); queueMicrotask(() => window.pronunciationFadesIn = document.querySelector('.lyrics-pronunciation').getAnimations().some(animation => animation.effect.getTiming().duration === 180)); null")
+    try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden && node.textContent)", "Show delayed pronunciation")
+    try await Task.sleep(for: .milliseconds(720))
+    try await expect("lyricDrift < 2", "Delayed pronunciation must keep the original lyric still on every frame")
+    try await expect("pronunciationFadesIn", "New pronunciation must fade in over 180 ms")
+    try await snapshot("lyrics-pronunciation-anchored")
+    _ = try await js("observeLyricPosition(readingAnchor); document.querySelector('.lyrics-pronunciation-button').click(); window.pronunciationFadesOut = !document.querySelector('.lyrics-pronunciation').hidden && document.querySelector('.lyrics-pronunciation').getAnimations().some(animation => animation.effect.getTiming().duration === 180); null")
+    try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Finish hiding pronunciation")
+    try await Task.sleep(for: .milliseconds(720))
+    try await expect("lyricDrift < 2", "Hiding pronunciation must keep the original lyric still")
+    try await expect("pronunciationFadesOut", "Pronunciation must fade out before collapsing its space")
+
+    for time in [2, 112] {
+        _ = try await js("fixtureTime = \(time); document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("lineIsCentered()", "Center boundary lyric before changing its height")
+        _ = try await js("observeLyricPosition(document.querySelector('.lyrics-line.is-current .lyrics-seek')); document.querySelector('.lyrics-pronunciation-button').click(); null")
+        try await Task.sleep(for: .milliseconds(720))
+        try await expect("lyricDrift < 2 && !document.querySelector('.lyrics-pronunciation').hidden", "Cached pronunciation must preserve first and last lyric positions")
+        _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Collapse pronunciation before the next boundary")
+    }
+
+    _ = try await js("""
+        const scroll = document.querySelector('.lyrics-scroll');
+        scroll.dispatchEvent(new WheelEvent('wheel'));
+        scroll.scrollTop = 150;
+        const middle = scroll.getBoundingClientRect().top + scroll.clientHeight / 2;
+        const anchor = [...document.querySelectorAll('.lyrics-seek')].find(node => node.getBoundingClientRect().bottom >= middle);
+        observeLyricPosition(anchor);
+        document.querySelector('.lyrics-pronunciation-button').click();
+        fixtureTime = 102;
+        document.querySelector('video').dispatchEvent(new Event('timeupdate'));
+        null;
+        """)
+    try await Task.sleep(for: .milliseconds(720))
+    try await expect("lyricDrift < 2", "Toggling pronunciation must preserve manual reading and its auto-scroll pause")
+    _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); document.querySelector('.lyrics-pronunciation-button').click(); null")
+    try await Task.sleep(for: .milliseconds(240))
+    try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden)", "Rapid OFF/ON must ignore the obsolete fade-out")
+    _ = try await js("fixtureReduceMotion = true; document.querySelector('.lyrics-pronunciation-button').click(); window.hiddenImmediately = [...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden && node.getAnimations().length === 0); null")
+    try await expect("hiddenImmediately", "Reduced Motion must hide pronunciation immediately without animations")
+    _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); window.shownImmediately = [...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden && node.getAnimations().length === 0); null")
+    try await expect("shownImmediately", "Reduced Motion must show pronunciation immediately without animations")
+    _ = try await js("fixtureReduceMotion = false; document.querySelectorAll('.lyrics-seek')[8].click(); null")
+    try await expect("Math.abs(document.querySelector('.lyrics-line.is-current .lyrics-seek').getBoundingClientRect().top + document.querySelector('.lyrics-line.is-current .lyrics-seek').getBoundingClientRect().height / 2 - document.querySelector('.lyrics-scroll').getBoundingClientRect().top - document.querySelector('.lyrics-scroll').clientHeight / 2) < 4", "Seeking must center the original lyric when pronunciation is visible")
+    try await snapshot("lyrics-pronunciation-seek")
+    _ = try await js("""
+        const bottomScroll = document.querySelector('.lyrics-scroll');
+        bottomScroll.dispatchEvent(new WheelEvent('wheel'));
+        bottomScroll.scrollTop = bottomScroll.scrollHeight;
+        observeLyricPosition([...document.querySelectorAll('.lyrics-seek')].at(-1));
+        document.querySelector('.lyrics-pronunciation-button').click();
+        null;
+        """)
+    try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Collapse pronunciation at the manual scroll boundary")
+    _ = try await js("fixtureTime = 102; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+    try await Task.sleep(for: .milliseconds(720))
+    try await expect("lyricDrift < 2", "Manual reading at the bottom must remain still after collapse and a playback update")
+    _ = try await js("languageHandler.postMessage = originalLanguagePost; null")
+    print("PASS: pronunciation anchoring, delayed content, cached toggles, wrapped first/last lyrics, manual reading, rapid reversal, Reduced Motion and seeking")
+}
+
 @MainActor func check() async throws {
     let live = CommandLine.arguments.contains("--live")
     let plainUI = CommandLine.arguments.contains("--plain-ui-only")
@@ -275,6 +398,44 @@ setbuf(stdout, nil)
     configuration.httpAdditionalHeaders = ["User-Agent": "Music/1.2.0 (https://github.com/indradprasetya/yt-music-webkit)"]
     if !live { configuration.protocolClasses = [LyricsTransport.self] }
     let provider = MusicLyricsProvider(session: URLSession(configuration: configuration))
+    if CommandLine.arguments.contains("--translation-data-only") {
+        let xml = """
+        <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:itunes="http://music.apple.com/lyric-ttml-internal">
+        <head><metadata><iTunesMetadata><translations><translation xml:lang="id"><text for="L2">Halo dunia</text></translation></translations>
+        <transliterations><transliteration xml:lang="ko-Latn"><text for="L2"><span begin="10" end="11">annyeong </span><span begin="11" end="12">sesang</span></text></transliteration></transliterations></iTunesMetadata></metadata></head>
+        <body><p begin="1" end="4" itunes:key="L1"><span begin="1" end="2">你好</span><span ttm:role="x-translation" xml:lang="en">Hello</span><span ttm:role="x-translation" xml:lang="id">Halo</span><span ttm:role="x-roman" xml:lang="zh-Latn"><span begin="1" end="1.5">nǐ </span><span begin="1.5" end="2">hǎo</span></span></p>
+        <p begin="10" end="14" itunes:key="L2">안녕 세상</p></body></tt>
+        """
+        let parsed = MusicTTML.parse(xml, duration: 180)
+        guard parsed?.plain == "你好\n안녕 세상",
+              parsed?.lines.first?["pronunciation"] as? String == "nǐ hǎo",
+              (parsed?.lines.first?["translations"] as? [String: String])?["id"] == "Halo",
+              parsed?.lines.last?["pronunciation"] as? String == "annyeong sesang",
+              (parsed?.lines.last?["translations"] as? [String: String])?["id"] == "Halo dunia" else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Keep inline and header translations/pronunciation attached to their original line without changing sung text"])
+        }
+        let inlineWords = parsed?.lines.first?["pronunciationWords"] as? [[String: Any]]
+        let headerWords = parsed?.lines.last?["pronunciationWords"] as? [[String: Any]]
+        guard inlineWords?.count == 2, inlineWords?.last?["start_time"] as? Int == 1500,
+              headerWords?.count == 2, headerWords?.last?["end_time"] as? Int == 12000 else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Keep provider pronunciation word timestamps separate from sung vocals"])
+        }
+        let outside = MusicTTML.parse(xml.replacingOccurrences(of: "begin=\"10\" end=\"11\"", with: "begin=\"1\" end=\"2\""), duration: 180)
+        guard outside?.lines.last?["pronunciationWords"] == nil else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Reject pronunciation timing outside its original lyric line"])
+        }
+        print("PASS: TTML translations, pronunciation and validated auxiliary word timing")
+        guard MusicLyricsTranslation.romanize("Hello world") == nil,
+              MusicLyricsTranslation.romanize("안녕하세요") == "annyeonghaseyo",
+              MusicLyricsTranslation.romanize("你好世界") == "nǐ hǎo shì jiè",
+              MusicLyricsTranslation.romanize("こんにちは世界")?.contains("sekai") == true else {
+            throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "Romanize Korean, Mandarin and Japanese using their own language, and leave Latin text alone"])
+        }
+        print("PASS: native Japanese, Korean and Mandarin romanization")
+        return
+    }
     if CommandLine.arguments.contains("--five-sources-only") {
         func lookup(_ title: String) async throws -> MusicLyricsProvider.Record? {
             let track = MusicLyricsProvider.Track(["title": title, "artist": "Artist", "album": "Album", "duration": 180.0])!
@@ -440,6 +601,16 @@ setbuf(stdout, nil)
         defaults.set(["video:modeOffsets01|source:NetEase": 750], forKey: offsetsKey)
     }
     defer { defaults.removePersistentDomain(forName: suite) }
+    if CommandLine.arguments.contains("--language-ui-only") {
+        defaults.set(true, forKey: "MusicLyricsShowTranslation")
+        defaults.set(["video:languageSongA": ["translate": false, "pronunciation": false]], forKey: "MusicLyricsLanguageByTrack")
+    }
+    if CommandLine.arguments.contains("--pronunciation-scroll-only") {
+        defaults.set(false, forKey: "MusicLyricsShowPronunciation")
+    }
+    if CommandLine.arguments.contains("--pronunciation-scroll-only") {
+        defaults.set(false, forKey: "MusicLyricsShowPronunciation")
+    }
     let lyrics = MusicLyrics(provider: provider, defaults: defaults)
     guard lyrics.isEnabled else {
         throw NSError(domain: "LyricsCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Synced lyrics must start enabled when no preference exists"])
@@ -505,6 +676,7 @@ setbuf(stdout, nil)
     setOcclusionDetection(false)
     let window = NSWindow(contentRect: web.frame, styleMask: [.titled], backing: .buffered, defer: false)
     window.contentView = web
+    lyrics.attach(to: web)
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     defer { window.close(); lyrics.cancelLookup() }
@@ -570,6 +742,145 @@ setbuf(stdout, nil)
         let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
         try bitmap.representation(using: .png, properties: [:])!
             .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+    }
+    if CommandLine.arguments.contains("--language-ui-only") {
+        try await expect("!!document.querySelector('.lyrics-translate-button') && !!document.querySelector('.lyrics-pronunciation-button')", "Show separate translation and pronunciation controls")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false' && document.querySelector('.lyrics-pronunciation-button').getAttribute('aria-pressed') === 'true' && document.querySelector('.lyrics-pronunciation-button').hidden", "Pronunciation defaults globally on but stays hidden for Latin lyrics; translation starts off")
+        try await selectVersion("languageSongA")
+        try await changeTrack("Language demo")
+        try await expect("document.querySelector('.lyrics-source')?.textContent.includes('Better Lyrics') === true && !document.querySelector('.lyrics-pronunciation-button').hidden", "Non-Latin lyrics reveal pronunciation")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false'", "A new song must not inherit translation")
+        try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].map(node => node.textContent).join('|') === 'ashita wa hareru|hamkke georeoyo|yì qǐ kàn xīng xing'", "Pronunciation works without starting translation")
+        try await expect("document.querySelector('.lyrics-language-select').disabled && document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false'", "Pronunciation does not require translation languages")
+        _ = try await js("document.querySelector('.lyrics-settings-button').click(); null")
+        try await expect("!document.querySelector('.lyrics-language-select').disabled", "Gear exposes language selection")
+        _ = try await js("document.querySelector('.lyrics-language-select').value = 'id'; document.querySelector('.lyrics-language-select').dispatchEvent(new Event('change')); null")
+        _ = try await js("document.querySelector('.lyrics-translate-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-translation')].map(node => node.textContent).join('|') === 'Besok langit akan cerah|Mari berjalan bersama|Bersama melihat bintang'", "Translation works independently beside pronunciation")
+        try await expect("document.querySelectorAll('.lyrics-seek .lyrics-word').length === 3", "Auxiliary text preserves original word timing")
+        try await expect("document.querySelector('.lyrics-line.is-current .lyrics-pronunciation .lyrics-word.is-current')?.textContent === 'hamkke'", "Provider pronunciation follows its own timed word")
+        _ = try await js("fixtureTime = 15; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelector('.lyrics-line.is-current .lyrics-pronunciation .lyrics-word.is-current')?.textContent === 'georeoyo'", "Advance pronunciation highlighting with playback")
+        _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('timeupdate')); window.musicCustomLyrics.translationStatus(-1, 'download'); null")
+        try await expect("!document.querySelector('.lyrics-language-note').textContent.includes('download')", "Ignore stale progress from old translation requests")
+
+        _ = try await js("""
+            document.body.style.cssText = 'margin:0;background:#1d2228;color:white;font-family:-apple-system,BlinkMacSystemFont,sans-serif';
+            document.querySelector('ytmusic-player-bar').style.cssText = 'display:block;padding:24px;font-size:18px;font-weight:600';
+            document.querySelector('.byline').style.cssText = 'display:block;font-size:13px;font-weight:400;margin-top:6px';
+            document.querySelectorAll('.byline a').forEach(link => link.style.color = '#bfc4ca');
+            document.querySelector('video').style.display = 'none';
+            document.querySelector('ytmusic-player-page').style.display = 'block';
+            document.querySelector('#tab-renderer').style.cssText = 'height:450px;width:520px;max-width:100%;margin:0 auto';
+            document.querySelector('[role=tablist]').style.cssText = 'display:flex;justify-content:center;gap:24px;padding:12px';
+            null;
+            """)
+        _ = try await js("""
+            window.languageHandler = webkit.messageHandlers.musicLyricsLanguage;
+            window.originalLanguagePost = languageHandler.postMessage.bind(languageHandler);
+            languageHandler.postMessage = message => message.action === 'translate'
+                ? new Promise((resolve, reject) => { window.fixtureTranslation = {token: message.token, resolve, reject}; })
+                : originalLanguagePost(message);
+            window.translationIsSpinning = () => {
+                const button = document.querySelector('.lyrics-translate-button');
+                const spinner = button.querySelector('.lyrics-translation-spinner');
+                return button.getAttribute('aria-busy') === 'true' && !!spinner
+                    && getComputedStyle(spinner).display !== 'none' && getComputedStyle(spinner).animationName !== 'none';
+            };
+            document.querySelector('.lyrics-language-select').value = 'fr';
+            document.querySelector('.lyrics-language-select').dispatchEvent(new Event('change'));
+            null;
+            """)
+        try await expect("!!window.fixtureTranslation && translationIsSpinning()", "Show a translation spinner while checking languages and awaiting native translation")
+        _ = try await js("window.musicCustomLyrics.translationStatus(fixtureTranslation.token, 'download'); null")
+        try await expect("translationIsSpinning() && document.querySelector('.lyrics-language-note').textContent.includes('download')", "Keep spinning while waiting for the language download")
+        try await snapshot("lyrics-language-busy");
+        _ = try await js("document.querySelector('#tab-renderer').style.width = '280px'; null")
+        try await snapshot("lyrics-language-busy-narrow");
+        _ = try await js("document.querySelector('#tab-renderer').style.width = '520px'; null")
+        _ = try await js("window.musicCustomLyrics.translationStatus(fixtureTranslation.token, 'translating'); null")
+        try await expect("translationIsSpinning() && document.querySelector('.lyrics-language-note').textContent.includes('Translating')", "Keep spinning during translation")
+        _ = try await js("fixtureTranslation.resolve({texts:['Tomorrow will be clear','Walk together','Watch the stars together']}); null")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-busy') === 'false' && getComputedStyle(document.querySelector('.lyrics-translation-spinner')).display === 'none'", "Stop the spinner when translation completes")
+        _ = try await js("document.querySelector('.lyrics-language-select').value = 'ko'; document.querySelector('.lyrics-language-select').dispatchEvent(new Event('change')); null")
+        try await expect("translationIsSpinning()", "Start a new spinner for a different target language")
+        _ = try await js("document.querySelector('.lyrics-translate-button').click(); fixtureTranslation.resolve({texts:['Late translation']}); null")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-busy') === 'false' && getComputedStyle(document.querySelector('.lyrics-translation-spinner')).display === 'none' && [...document.querySelectorAll('.lyrics-translation')].every(node => node.hidden)", "Turning translation off stops the spinner and ignores a late result")
+        _ = try await js("document.querySelector('.lyrics-translate-button').click(); null")
+        try await expect("translationIsSpinning()", "Allow translation to start again after cancellation")
+        _ = try await js("fixtureTranslation.reject(new Error('Fixture unavailable')); null")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-busy') === 'false' && document.querySelector('.lyrics-language-note').textContent.includes('unavailable')", "Stop the spinner when translation fails")
+        _ = try await js("languageHandler.postMessage = originalLanguagePost; document.querySelector('.lyrics-language-select').value = 'id'; document.querySelector('.lyrics-language-select').dispatchEvent(new Event('change')); null")
+        try await expect("document.querySelector('.lyrics-translation')?.textContent === 'Besok langit akan cerah' && document.querySelector('.lyrics-translate-button').getAttribute('aria-busy') === 'false'", "Restore source translations after checking loading states")
+
+        try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0 && document.fonts.status === 'loaded'", "Finish lyric transitions before inspecting controls")
+        _ = try await web.callAsyncJavaScript("await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); return null;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        try await snapshot("lyrics-language-menu")
+        _ = try await js("document.querySelector('#tab-renderer').style.width = '280px'; null")
+        try await expect("document.querySelector('.lyrics-settings-panel').getBoundingClientRect().right <= document.querySelector('#tab-renderer').getBoundingClientRect().right", "Gear language controls fit narrow panels")
+        try await snapshot("lyrics-language-narrow")
+        _ = try await js("document.querySelector('#tab-renderer').style.width = '520px'; document.querySelector('.lyrics-settings-panel .lyrics-close-button').click(); null")
+        try await snapshot("lyrics-three-lines")
+        try await selectVersion("languageSongB")
+        try await changeTrack("Fixture")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'First line' && document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false' && document.querySelector('.lyrics-pronunciation-button').hidden && document.querySelector('.lyrics-pronunciation-button').getAttribute('aria-pressed') === 'true'", "A new Latin song resets translation and retains the global pronunciation choice")
+        try await selectVersion("languageSongC")
+        try await changeTrack("Pronunciation generated")
+        try await expect("!document.querySelector('.lyrics-pronunciation-button').hidden && document.querySelector('.lyrics-pronunciation-button').getAttribute('aria-pressed') === 'true' && document.querySelector('.lyrics-pronunciation')?.textContent === 'yoru da' && document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false'", "Automatically pronounce a different non-Latin song without enabling its translation")
+        _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Allow pronunciation to be disabled globally")
+        try await selectVersion("languageSongA")
+        try await changeTrack("Language demo")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'true' && document.querySelector('.lyrics-pronunciation-button').getAttribute('aria-pressed') === 'false' && document.querySelector('.lyrics-translation')?.textContent === 'Besok langit akan cerah' && [...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Returning to a saved song restores translation and keeps the global pronunciation OFF")
+        for _ in 0..<100 {
+            if (defaults.object(forKey: "MusicLyricsShowPronunciation") as? Bool) == false { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await update()
+        try await expect("document.querySelector('.lyrics-pronunciation-button')?.getAttribute('aria-pressed') === 'false' && document.querySelector('.lyrics-translate-button')?.getAttribute('aria-pressed') === 'true'", "Global pronunciation OFF and song translation survive renderer restart")
+        _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden)", "Restore global pronunciation independently of translation")
+        _ = try await js("document.querySelector('.lyrics-translate-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-translation')].every(node => node.hidden) && [...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden)", "Turning translation off does not disable pronunciation")
+        for _ in 0..<100 {
+            if defaults.dictionary(forKey: "MusicLyricsLanguageByTrack")?["video:languageSongA"] == nil
+                && (defaults.object(forKey: "MusicLyricsShowPronunciation") as? Bool) == true { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await update()
+        try await expect("document.querySelector('.lyrics-pronunciation-button')?.getAttribute('aria-pressed') === 'true' && document.querySelector('.lyrics-translate-button')?.getAttribute('aria-pressed') === 'false'", "Remember global pronunciation ON and per-song translation OFF across renderer restart")
+        _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); null")
+        for _ in 0..<100 {
+            if (defaults.object(forKey: "MusicLyricsShowPronunciation") as? Bool) == false { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let globalPronunciation = defaults.object(forKey: "MusicLyricsShowPronunciation") as? Bool
+        let translationBook = defaults.dictionary(forKey: "MusicLyricsLanguageByTrack")
+        guard globalPronunciation == false, translationBook?["video:languageSongA"] == nil,
+              translationBook?["video:languageSongC"] == nil else { fatalError("Save pronunciation globally without adding song overrides") }
+        print("PASS: separate lyric controls, global pronunciation, per-song translation, spinner lifecycle, CJK visibility, independent updates, reload and narrow layout")
+        return
+    }
+    if CommandLine.arguments.contains("--pronunciation-scroll-only") {
+        try await checkPronunciationScrolling(js: js, expect: { value, reason in try await expect(value, reason) }, changeTrack: changeTrack, snapshot: snapshot)
+        return
+    }
+    if CommandLine.arguments.contains("--pronunciation-ui-only") {
+        try await expect("!!document.querySelector('.lyrics-pronunciation-button')", "Load lyric controls before changing the test song")
+        try await changeTrack("Pronunciation generated")
+        try await expect("document.querySelector('.lyrics-source')?.textContent.includes('Better Lyrics') === true && !document.querySelector('.lyrics-pronunciation-button').hidden", "Load non-Latin timed vocals for automatic pronunciation")
+        _ = try await js("fixtureTime = 2; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelectorAll('.lyrics-pronunciation .lyrics-word').length === 2", "Map generated pronunciation to original word timestamps")
+        try await expect("document.querySelector('.lyrics-pronunciation .lyrics-word.is-current')?.textContent === 'yoru'", "Highlight the first generated word")
+        _ = try await js("fixtureTime = 4; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelector('.lyrics-pronunciation .lyrics-word.is-current')?.textContent === 'da'", "Highlight the next generated word")
+        _ = try await js("fixtureTime = 2; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
+        try await expect("document.querySelector('.lyrics-pronunciation .lyrics-word.is-current')?.textContent === 'yoru' && !document.querySelectorAll('.lyrics-pronunciation .lyrics-word')[1].classList.contains('is-sung')", "Seeking backwards clears later pronunciation progress")
+        try await expect("document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false' && document.querySelector('.lyrics-language-select').disabled", "Automatic pronunciation never enables translation or asks for its models")
+        try await changeTrack("Latin demo")
+        try await expect("document.querySelector('.lyrics-seek')?.textContent === 'Café déjà vu 👩‍🎤 123' && document.querySelector('.lyrics-pronunciation-button').hidden", "Accented Latin, digits and emoji do not reveal pronunciation")
+        print("PASS: generated pronunciation karaoke, forward/backward seeking, independent translation and non-Latin visibility")
+        return
     }
     if CommandLine.arguments.contains("--blank-lines-only") {
         try await expect("!!document.querySelector('.lyrics-line')", "Load initial lyrics before checking blank cues")

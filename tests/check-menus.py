@@ -293,6 +293,8 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                                     'NSApp.activate(ignoringOtherApps: true)\n' + checks, 1))
     binary = app / 'MacOS/MenuCheck'
     subprocess.run(['xcrun', 'swiftc', '-F', str(frameworks), '-framework', 'Sparkle',
+                    '-I', str(frameworks), '-I', str(frameworks.parents[2] / 'SourcePackages/checkouts/Yams/Sources/CYaml/include'),
+                    str(frameworks / 'Yams.o'), str(frameworks / 'CYaml.o'),
                     '-Xlinker', '-rpath', '-Xlinker', str(frameworks), str(script),
                     str(root / 'Music/MusicUpdates.swift'), str(root / 'Music/MusicReleaseNotes.swift'),
                     str(root / 'Music/MusicStartupRules.swift'), str(root / 'Music/MusicStartupMessages.swift'),
@@ -301,6 +303,7 @@ with tempfile.TemporaryDirectory(prefix='music-menu-check-') as directory:
                     str(root / 'Music/MusicScripts.swift'),
                     str(root / 'Music/MusicLyrics.swift'), str(root / 'Music/MusicLyricsProvider.swift'),
                     str(root / 'Music/MusicTTML.swift'),
+                    str(root / 'Music/MusicLyricsTranslation.swift'),
                     str(root / 'Music/MusicMenuSymbol.swift'),
                     '-o', str(binary)], check=True,
                    env=dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer'))

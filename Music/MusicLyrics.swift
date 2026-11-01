@@ -1,6 +1,7 @@
 import Foundation
 import CoreFoundation
 import WebKit
+import AppKit
 
 @MainActor
 final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMessageHandler {
@@ -9,13 +10,17 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
     // Legacy offsets have no source identity; keep them untouched rather than guessing a provider.
     private let offsetsKey = "MusicLyricsOffsetsByTrackAndSource"
     private let providersKey = "MusicLyricsProvidersByTrack"
+    private let languagesKey = "MusicLyricsLanguageByTrack"
+    private let pronunciationKey = "MusicLyricsShowPronunciation"
     private var installedScript: WKUserScript?
     private let provider: MusicLyricsProvider
+    private let translation: MusicLyricsTranslation
     private var lookupTask: Task<Void, Never>?
 
     init(provider: MusicLyricsProvider? = nil, defaults: UserDefaults = .standard) {
         self.provider = provider ?? MusicLyricsProvider()
         self.defaults = defaults
+        translation = MusicLyricsTranslation(defaults: defaults)
         super.init()
     }
 
@@ -23,17 +28,62 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         controller.addScriptMessageHandler(self, contentWorld: .defaultClient, name: "musicLyricsLookup")
         controller.add(self, contentWorld: .defaultClient, name: "musicLyricsOffset")
         controller.add(self, contentWorld: .defaultClient, name: "musicLyricsProvider")
+        controller.addScriptMessageHandler(self, contentWorld: .defaultClient, name: "musicLyricsLanguage")
     }
+
+    func attach(to view: NSView) { translation.attach(to: view) }
 
     func cancelLookup() {
         lookupTask?.cancel()
         lookupTask = nil
+        translation.cancel()
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         guard isYouTubeMusic(message.frameInfo) else {
             replyHandler(nil, "Lyrics are available only on YouTube Music.")
+            return
+        }
+        if message.name == "musicLyricsLanguage" {
+            guard isEnabled, let body = message.body as? [String: Any] else {
+                replyHandler(nil, "Synced lyrics are disabled.")
+                return
+            }
+            if body["action"] as? String == "pronunciationPreference" {
+                guard let enabled = body["enabled"] as? Bool else {
+                    replyHandler(nil, "Invalid pronunciation preference.")
+                    return
+                }
+                defaults.set(enabled, forKey: pronunciationKey)
+                apply(to: userContentController)
+                replyHandler(["status": "saved"], nil)
+                return
+            }
+            if body["action"] as? String == "trackPreferences" {
+                guard let key = body["trackKey"] as? String, validTrackKey(key), !key.hasPrefix("mode:"),
+                      let translate = body["translate"] as? Bool else {
+                    replyHandler(nil, "Invalid song language preferences.")
+                    return
+                }
+                var saved = trackLanguages
+                if translate { saved[key] = ["translate": true] }
+                else { saved.removeValue(forKey: key) }
+                if saved.isEmpty { defaults.removeObject(forKey: languagesKey) }
+                else { defaults.set(saved, forKey: languagesKey) }
+                apply(to: userContentController)
+                replyHandler(["status": "saved"], nil)
+                return
+            }
+            let token = body["token"] as? Int
+            translation.handle(body, onStatus: { [weak webView = message.webView] phase in
+                guard let token, token >= 0 else { return }
+                webView?.callAsyncJavaScript("window.musicCustomLyrics?.translationStatus(token, phase); return null;",
+                    arguments: ["token": token, "phase": phase], in: nil, in: .defaultClient, completionHandler: nil)
+            }) { [weak self] value, error in
+                if body["action"] as? String == "preferences", error == nil { self?.apply(to: userContentController) }
+                replyHandler(value, error)
+            }
             return
         }
         if (message.body as? [String: Any])?["action"] as? String == "cancel" {
@@ -109,6 +159,15 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         }
     }
 
+    private var trackLanguages: [String: [String: Bool]] {
+        (defaults.dictionary(forKey: languagesKey) ?? [:]).reduce(into: [:]) { result, entry in
+            guard validTrackKey(entry.key), !entry.key.hasPrefix("mode:"),
+                  let value = entry.value as? [String: Bool],
+                  value["translate"] == true else { return }
+            result[entry.key] = ["translate": true]
+        }
+    }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "musicLyricsProvider" {
             guard isEnabled, isYouTubeMusic(message.frameInfo), let body = message.body as? [String: Any],
@@ -148,7 +207,11 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         guard isEnabled else { return }
         let offsets = (try? JSONEncoder().encode(trackOffsets)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let providers = (try? JSONEncoder().encode(trackProviders)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        let script = WKUserScript(source: Self.source(offsets: offsets, providers: providers),
+        var preferences = translation.preferences
+        preferences["pronunciation"] = defaults.object(forKey: pronunciationKey) as? Bool ?? true
+        let languages = (try? JSONSerialization.data(withJSONObject: preferences)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let trackLanguageJSON = (try? JSONEncoder().encode(trackLanguages)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        let script = WKUserScript(source: Self.source(offsets: offsets, providers: providers, languages: languages, trackLanguages: trackLanguageJSON),
                                   injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient)
         controller.addUserScript(script)
         installedScript = script
@@ -169,7 +232,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         }
     }
 
-    private static func source(offsets: String, providers: String) -> String {
+    private static func source(offsets: String, providers: String, languages: String, trackLanguages: String) -> String {
         """
         (() => {
             if (location.origin !== 'https://music.youtube.com') return;
@@ -196,20 +259,26 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 #music-custom-lyrics[hidden], #music-custom-lyrics [hidden] { display: none !important; }
                 #music-custom-lyrics .lyrics-toolbar {
-                    display: flex; justify-content: flex-end; align-items: center;
+                    display: flex; justify-content: flex-end; align-items: center; gap: 8px;
                     min-height: 34px; position: absolute; top: 8px; left: 0; right: 14px; z-index: 2;
                     pointer-events: none;
                 }
-                #music-custom-lyrics .lyrics-settings-button {
-                    display: grid; place-items: center; width: 34px; height: 34px;
-                    padding: 0; border: 0; border-radius: 50%; color: rgba(255,255,255,.78);
-                    background: transparent; cursor: pointer; pointer-events: auto;
+                #music-custom-lyrics .lyrics-toolbar-button {
+                    display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px;
+                    padding: 0; border: 0; border-radius: 50%; color: rgba(255,255,255,.6);
+                    background: transparent; outline: none; cursor: pointer; pointer-events: auto;
                 }
-                #music-custom-lyrics .lyrics-settings-button:hover,
-                #music-custom-lyrics .lyrics-settings-button:focus-visible { color: #fff; background: rgba(255,255,255,.12); }
-                #music-custom-lyrics .lyrics-settings-button:focus-visible,
+                #music-custom-lyrics .lyrics-toolbar-button:hover,
+                #music-custom-lyrics .lyrics-toolbar-button:focus-visible { color: #fff; background: rgba(255,255,255,.12); }
+                #music-custom-lyrics .lyrics-toolbar-button[aria-pressed="true"] { color: #fff; background: transparent; }
                 #music-custom-lyrics button:focus-visible { outline: 2px solid rgba(255,255,255,.78); outline-offset: 2px; }
-                #music-custom-lyrics .lyrics-settings-button svg { width: 19px; height: 19px; fill: currentColor; }
+                #music-custom-lyrics .lyrics-toolbar-button svg { width: 19px; height: 19px; fill: currentColor; }
+                #music-custom-lyrics .lyrics-pronunciation-button svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+                #music-custom-lyrics .lyrics-pronunciation-button[aria-pressed="true"] svg { stroke-width: 2.4; }
+                #music-custom-lyrics .lyrics-translate-button[aria-pressed="true"] svg { stroke: currentColor; stroke-width: .5; stroke-linejoin: round; }
+                #music-custom-lyrics .lyrics-translation-spinner { display: none; }
+                #music-custom-lyrics .lyrics-translate-button[aria-pressed="true"][aria-busy="true"] .lyrics-translation-spinner { display: block; }
+                #music-custom-lyrics .lyrics-translate-button[aria-pressed="true"][aria-busy="true"] svg { display: none; }
                 #music-custom-lyrics .lyrics-settings-panel {
                     position: absolute; top: 42px; right: 0; z-index: 3;
                     width: 248px; max-width: 100%; max-height: calc(100vh - 180px); overflow-y: auto; box-sizing: border-box;
@@ -220,30 +289,49 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-settings-panel h2 {
                     margin: 0 36px 8px 0; font-size: 14px; font-weight: 500; line-height: 20px;
                 }
-                #music-custom-lyrics .lyrics-provider-section {
+                #music-custom-lyrics .lyrics-provider-section,
+                #music-custom-lyrics .lyrics-translation-section {
                     margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.12);
                 }
-                #music-custom-lyrics .lyrics-provider-label {
+                #music-custom-lyrics .lyrics-provider-label,
+                #music-custom-lyrics .lyrics-language-target {
                     display: block; margin-bottom: 4px; color: rgba(255,255,255,.7); font-size: 12px; line-height: 16px;
                 }
-                #music-custom-lyrics .lyrics-provider-control { position: relative; }
-                #music-custom-lyrics .lyrics-provider-select {
+                #music-custom-lyrics .lyrics-provider-control,
+                #music-custom-lyrics .lyrics-language-control { position: relative; }
+                #music-custom-lyrics .lyrics-provider-select,
+                #music-custom-lyrics .lyrics-language-select {
                     display: block; width: 100%; min-height: 36px; box-sizing: border-box;
                     padding: 6px 28px 6px 0; border: 0; border-radius: 4px;
                     color: #f5f5f5; background: transparent; color-scheme: dark; font: inherit; font-size: 14px;
                     -webkit-appearance: none; appearance: none; cursor: pointer; text-overflow: ellipsis;
                 }
-                #music-custom-lyrics .lyrics-provider-select:hover { background: rgba(255,255,255,.08); }
-                #music-custom-lyrics .lyrics-provider-select:focus-visible {
+                #music-custom-lyrics .lyrics-provider-select:hover,
+                #music-custom-lyrics .lyrics-language-select:hover { background: rgba(255,255,255,.08); }
+                #music-custom-lyrics .lyrics-provider-select:focus-visible,
+                #music-custom-lyrics .lyrics-language-select:focus-visible {
                     outline: 2px solid rgba(255,255,255,.78); outline-offset: 2px;
                 }
-                #music-custom-lyrics .lyrics-provider-chevron {
+                #music-custom-lyrics .lyrics-provider-chevron,
+                #music-custom-lyrics .lyrics-language-chevron {
                     position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
                     width: 18px; height: 18px; color: rgba(255,255,255,.7); pointer-events: none;
                 }
-                #music-custom-lyrics .lyrics-provider-note {
+                #music-custom-lyrics .lyrics-provider-note,
+                #music-custom-lyrics .lyrics-language-note {
                     margin: 4px 0 0; color: rgba(255,255,255,.65); font-size: 11px; line-height: 16px;
                 }
+                #music-custom-lyrics .lyrics-language-help {
+                    margin: 8px 0 0;
+                    color: rgba(255,255,255,.7); font-size: 11px; line-height: 16px;
+                }
+                #music-custom-lyrics .lyrics-language-system-settings {
+                    display: inline-flex; align-items: center; gap: 5px; min-height: 32px; max-width: 100%;
+                    padding: 4px 0; border: 0; border-radius: 3px; background: transparent; color: #f5f5f5;
+                    font-family: inherit; font-size: 12px; font-weight: 500; text-align: left; cursor: pointer;
+                }
+                #music-custom-lyrics .lyrics-language-system-settings:hover { text-decoration: underline; text-underline-offset: 3px; }
+                #music-custom-lyrics .lyrics-language-system-settings svg { flex: 0 0 auto; width: 14px; height: 14px; }
                 #music-custom-lyrics .lyrics-offset-controls {
                     display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px;
                     align-items: center; gap: 8px; padding: 4px 0;
@@ -295,7 +383,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 #music-custom-lyrics .lyrics-scroll {
                     flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
-                    overscroll-behavior: contain; scrollbar-width: auto; scroll-behavior: auto;
+                    overscroll-behavior: contain; scrollbar-width: auto; scroll-behavior: auto; overflow-anchor: none;
                     mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent), linear-gradient(#000, #000);
                     mask-size: calc(100% - 14px) 100%, 14px 100%;
                     mask-position: left top, right top; mask-repeat: no-repeat;
@@ -322,6 +410,15 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     position: relative; padding-inline-end: 48px;
                 }
                 #music-custom-lyrics .lyrics-line + .lyrics-line { margin-top: 24px; }
+                #music-custom-lyrics .lyrics-pronunciation,
+                #music-custom-lyrics .lyrics-translation {
+                    display: block; margin-top: 5px; font-size: .64em; font-weight: 500;
+                    line-height: 1.45; letter-spacing: 0; overflow-wrap: anywhere; text-shadow: none;
+                    color: inherit;
+                }
+                #music-custom-lyrics .lyrics-pronunciation { font-size: .73em; font-weight: 600; }
+                #music-custom-lyrics .is-current .lyrics-translation { color: rgba(255,255,255,.8); }
+                #music-custom-lyrics .lyrics-line:has(.lyrics-pronunciation:not([hidden]), .lyrics-translation:not([hidden])) > .lyrics-align { top: 18px; }
                 #music-custom-lyrics .lyrics-line.is-credit + .lyrics-line.is-credit { margin-top: 0; }
                 #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line {
                     transform: translateY(3px) scale(.94); transform-origin: left center;
@@ -406,7 +503,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics.is-notice .lyrics-message-text {
                     display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere;
                 }
-                #music-custom-lyrics .lyrics-spinner {
+                #music-custom-lyrics .lyrics-spinner,
+                #music-custom-lyrics .lyrics-translation-spinner {
                     flex: 0 0 auto; width: 16px; height: 16px; box-sizing: border-box;
                     border: 2px solid rgba(255,255,255,.2); border-top-color: rgba(255,255,255,.85);
                     border-radius: 50%; animation: music-lyrics-spin .8s linear infinite;
@@ -455,7 +553,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     padding: 8px 0; text-align: center; letter-spacing: .01em;
                 }
                 @media (prefers-reduced-motion: reduce) {
-                    #music-custom-lyrics .lyrics-spinner { animation: none; }
+                    #music-custom-lyrics .lyrics-spinner,
+                    #music-custom-lyrics .lyrics-translation-spinner { animation: none; }
                     #music-custom-lyrics .lyrics-line { transition: none; }
                     #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line { transform: none; }
                     #music-custom-lyrics .lyrics-scroll { scroll-behavior: auto !important; }
@@ -475,6 +574,16 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let activeIndex = -1;
             const savedOffsets = \(offsets);
             const savedProviders = \(providers);
+            const languagePreferences = \(languages);
+            const savedLanguagePreferences = \(trackLanguages);
+            const currentLanguagePreferences = {translate: false, pronunciation: languagePreferences.pronunciation !== false};
+            const translationCache = new Map();
+            const pronunciationCache = new Map();
+            let translationGeneration = 0;
+            let pronunciationGeneration = 0;
+            let languageTrackKey = '';
+            let preferenceSave = Promise.resolve();
+            let languagesReady = null;
             let currentResult = null;
             let offsetTrackKey = '';
             let offset = 0;
@@ -522,9 +631,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     videoID: location.pathname === '/watch' && /^[A-Za-z0-9_-]{1,128}$/.test(videoID || '') ? videoID : null};
             }
 
-            function offsetIdentity(track) {
-                const identity = track.videoID ? `video:${track.videoID}`
+            function songIdentity(track) {
+                return track.videoID ? `video:${track.videoID}`
                     : `track:${JSON.stringify([track.title.toLowerCase(), track.artist.toLowerCase(), track.duration])}`;
+            }
+
+            function offsetIdentity(track) {
+                const identity = songIdentity(track);
                 return track.playbackMode ? `mode:${track.playbackMode}|${identity}` : identity;
             }
 
@@ -561,11 +674,18 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 element.setAttribute('aria-label', 'Synced Lyrics');
                 element.innerHTML = `
                     <div class="lyrics-toolbar">
-                        <button class="lyrics-settings-button" type="button" aria-label="Lyric settings" aria-expanded="false" aria-haspopup="dialog" aria-controls="music-lyrics-settings" title="Lyric settings">
+                        <button class="lyrics-toolbar-button lyrics-pronunciation-button" type="button" aria-label="Pronunciation" aria-pressed="false" title="Show pronunciation" hidden>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4H3v16h3M18 4h3v16h-3M8 16l4-8 4 8M9.5 13h5"/></svg>
+                        </button>
+                        <button class="lyrics-toolbar-button lyrics-translate-button" type="button" aria-label="Translate lyrics" aria-pressed="false" title="Show translation">
+                            <span class="lyrics-translation-spinner" aria-hidden="true"></span>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.9 15.1 10.4 12.6l.1-.1A17.5 17.5 0 0 0 14.1 6H17V4h-7V2H8v2H1v2h11.2A15.8 15.8 0 0 1 9 11.4 15.6 15.6 0 0 1 6.7 8h-2a17.7 17.7 0 0 0 3 4.6L2.7 17.5l1.4 1.4L9 14l3.1 3.1.8-2ZM18.5 9h-2L12 21h2l1.1-3h4.8l1.1 3h2L18.5 9Zm-2.7 7 1.7-4.6 1.7 4.6h-3.4Z"/></svg>
+                        </button>
+                        <button class="lyrics-settings-button lyrics-toolbar-button" type="button" aria-label="Lyric settings" aria-expanded="false" aria-haspopup="dialog" aria-controls="music-lyrics-settings" title="Lyric settings">
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94a7.8 7.8 0 0 0 .05-.94 7.8 7.8 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.88 2h-3.76a.5.5 0 0 0-.5.42L9.26 4.96c-.59.23-1.14.55-1.63.94l-2.4-.96a.5.5 0 0 0-.6.22L2.7 8.48a.5.5 0 0 0 .12.64l2.03 1.58a7.8 7.8 0 0 0-.05.94c0 .32.02.63.05.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.12.21.37.3.61.22l2.39-.96c.49.39 1.04.71 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.76a.5.5 0 0 0 .5-.42l.36-2.54c.59-.23 1.14-.55 1.63-.94l2.4.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
                         </button>
                         <div class="lyrics-settings-panel" id="music-lyrics-settings" role="dialog" aria-label="Lyric settings" hidden>
-                            <h2>Lyric timing</h2>
+                            <h2>Lyric settings</h2>
                             <button type="button" class="lyrics-close-button" aria-label="Close lyric settings" title="Close">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
                             </button>
@@ -593,6 +713,14 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                                 </div>
                                 <p class="lyrics-provider-note" id="music-lyrics-provider-note" role="status"></p>
                             </div>
+                            <div class="lyrics-translation-section">
+                                <label class="lyrics-language-target" for="music-lyrics-language-target">Translate to</label>
+                                <div class="lyrics-language-control"><select class="lyrics-language-select" id="music-lyrics-language-target" aria-describedby="music-lyrics-language-note" disabled><option>Loading languages…</option></select>
+                                <svg class="lyrics-language-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></div>
+                                <p class="lyrics-language-note" id="music-lyrics-language-note" role="status"></p>
+                                <p class="lyrics-language-help">One-time Apple language download.</p>
+                                <button type="button" class="lyrics-language-system-settings" title="Open Translation Languages in System Settings">Manage downloaded languages<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></button>
+                            </div>
                         </div>
                     </div>
                     <div class="lyrics-scroll" tabindex="0" aria-label="Synced Lyrics"><div class="lyrics-lines" role="list"></div></div>
@@ -616,8 +744,32 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     settings.style.maxHeight = `${Math.max(0, element.clientHeight - 58)}px`;
                     settings.hidden = !settings.hidden;
                     button.setAttribute('aria-expanded', String(!settings.hidden));
+                    if (!settings.hidden) ensureLanguages().catch(error => translationNote(error.message));
                 });
-                element.querySelector('.lyrics-close-button').addEventListener('click', () => closeSettings(true));
+                element.querySelector('.lyrics-settings-panel .lyrics-close-button').addEventListener('click', () => closeSettings(true));
+                element.querySelector('.lyrics-language-system-settings').addEventListener('click', () => {
+                    window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'settings'})
+                        .catch(error => translationNote(error.message));
+                });
+                element.querySelector('.lyrics-pronunciation-button').addEventListener('click', () => {
+                    currentLanguagePreferences.pronunciation = !currentLanguagePreferences.pronunciation;
+                    const enabled = currentLanguagePreferences.pronunciation;
+                    preferenceSave = preferenceSave.then(() => window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'pronunciationPreference', enabled}))
+                        .catch(error => { overlay.querySelector('.lyrics-feedback').textContent = `Could not save pronunciation: ${error.message}`; });
+                    updatePronunciation();
+                });
+                element.querySelector('.lyrics-translate-button').addEventListener('click', () => {
+                    currentLanguagePreferences.translate = !currentLanguagePreferences.translate;
+                    saveSongLanguagePreferences();
+                    updateTranslation();
+                });
+                element.querySelector('.lyrics-language-select').addEventListener('change', () => {
+                    languagePreferences.target = element.querySelector('.lyrics-language-select').value;
+                    const preferences = {action: 'preferences', target: languagePreferences.target};
+                    preferenceSave = preferenceSave.then(() => window.webkit.messageHandlers.musicLyricsLanguage.postMessage(preferences))
+                        .catch(error => translationNote(`Could not save language: ${error.message}`));
+                    if (currentLanguagePreferences.translate) updateTranslation();
+                });
                 document.addEventListener('click', event => {
                     if (!event.composedPath().includes(element.querySelector('.lyrics-toolbar'))) closeSettings();
                 }, {capture: true, signal: lifetime.signal});
@@ -668,6 +820,236 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (restoreFocus) button.focus({preventScroll: true});
             }
 
+            function translationNote(message) {
+                if (overlay) overlay.querySelector('.lyrics-language-note').textContent = message;
+            }
+
+            function hasNonLatin(text) {
+                return Array.from(text).some(character => /\\p{L}/u.test(character) && !/\\p{Script=Latin}/u.test(character));
+            }
+
+            function updateLanguageButtons() {
+                if (!overlay) return;
+                const pronounce = overlay.querySelector('.lyrics-pronunciation-button');
+                pronounce.hidden = !activeLines.some(line => !line.credit && hasNonLatin(line.text));
+                pronounce.setAttribute('aria-pressed', String(currentLanguagePreferences.pronunciation));
+                pronounce.title = currentLanguagePreferences.pronunciation ? 'Hide pronunciation' : 'Show pronunciation';
+                const translate = overlay.querySelector('.lyrics-translate-button');
+                translate.setAttribute('aria-pressed', String(currentLanguagePreferences.translate));
+                translate.title = currentLanguagePreferences.translate ? 'Hide translation' : 'Show translation';
+            }
+
+            function restoreSongLanguagePreferences(track) {
+                const identity = track ? songIdentity(track) : '';
+                if (identity === languageTrackKey) return;
+                languageTrackKey = identity;
+                const saved = savedLanguagePreferences[identity] || {};
+                currentLanguagePreferences.translate = saved.translate === true;
+                translationGeneration++;
+                pronunciationGeneration++;
+                translationNote('');
+                updateLanguageButtons();
+            }
+
+            function saveSongLanguagePreferences() {
+                if (!languageTrackKey) return;
+                const preferences = {translate: currentLanguagePreferences.translate};
+                if (preferences.translate) savedLanguagePreferences[languageTrackKey] = preferences;
+                else delete savedLanguagePreferences[languageTrackKey];
+                const payload = {...preferences, action: 'trackPreferences', trackKey: languageTrackKey};
+                preferenceSave = preferenceSave.then(() => window.webkit.messageHandlers.musicLyricsLanguage.postMessage(payload))
+                    .catch(error => translationNote(`Could not save song preferences: ${error.message}`));
+                updateLanguageButtons();
+            }
+
+            function ensureLanguages() {
+                if (!languagesReady) languagesReady = window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'options'})
+                    .then(reply => {
+                        if (lifetime.signal.aborted) return;
+                        const select = overlay.querySelector('.lyrics-language-select');
+                        select.replaceChildren(...reply.languages.map(item => new Option(item.name, item.code)));
+                        languagePreferences.target = reply.target;
+                        select.value = reply.target;
+                        select.disabled = false;
+                    }).catch(error => { languagesReady = null; throw error; });
+                return languagesReady;
+            }
+
+            function embeddedTranslation(line, target) {
+                try {
+                    const language = new Intl.Locale(target).maximize();
+                    for (const [code, text] of Object.entries(line.translations || {})) {
+                        const candidate = new Intl.Locale(code).maximize();
+                        if (candidate.language === language.language && candidate.script === language.script && typeof text === 'string') return text;
+                    }
+                } catch (_) {}
+                return '';
+            }
+
+            function refreshLyricsLayout(update) {
+                const scroll = overlay.querySelector('.lyrics-scroll');
+                const lyrics = [...overlay.querySelectorAll('.lyrics-seek')];
+                const middle = scroll.getBoundingClientRect().top + scroll.clientHeight / 2;
+                const anchor = (Date.now() > userScrollUntil && overlay.querySelector('.lyrics-line.is-current .lyrics-seek'))
+                    || lyrics.find(node => node.getBoundingClientRect().bottom >= middle) || lyrics.at(-1);
+                const top = anchor?.getBoundingClientRect().top;
+                cancelScroll();
+                update();
+                updateActiveLine(false, false, true);
+                if (anchor) {
+                    const target = scroll.scrollTop + anchor.getBoundingClientRect().top - top;
+                    const list = overlay.querySelector('.lyrics-lines');
+                    const maximum = scroll.scrollHeight - scroll.clientHeight;
+                    // Keep room at the boundaries so shrinking content cannot clamp the reading position.
+                    if (target < 0) list.style.paddingBlockStart = `${parseFloat(list.style.paddingBlockStart) - target}px`;
+                    if (target > maximum) list.style.paddingBlockEnd = `${parseFloat(list.style.paddingBlockEnd) + target - maximum}px`;
+                    scroll.scrollTop = Math.max(0, target);
+                }
+            }
+
+            function paintTranslations(lines, texts) {
+                refreshLyricsLayout(() => {
+                    const rows = overlay.querySelectorAll('.lyrics-line');
+                    for (const [index, line] of lines.entries()) {
+                        if (line.credit) continue;
+                        const node = rows[index].querySelector('.lyrics-translation');
+                        node.textContent = texts[index] || '';
+                        node.lang = languagePreferences.target || '';
+                        node.hidden = !currentLanguagePreferences.translate || !node.textContent;
+                    }
+                });
+            }
+
+            function pronunciationWords(text, words) {
+                if (!Array.isArray(words) || !words.length || words.length > 2000) return [];
+                let previous = -1;
+                const valid = words.every(word => {
+                    const ordered = typeof word.word === 'string' && Number.isFinite(word.start_time) && Number.isFinite(word.end_time)
+                        && word.start_time >= Math.max(0, previous) && word.end_time > word.start_time && word.end_time <= 3_602_000;
+                    previous = word.start_time;
+                    return ordered;
+                });
+                return valid && words.map(word => word.word).join('') === text ? words : [];
+            }
+
+            function paintPronunciation(lines, entries) {
+                refreshLyricsLayout(() => {
+                    const rows = overlay.querySelectorAll('.lyrics-line');
+                    for (const [index, line] of lines.entries()) {
+                        if (line.credit) continue;
+                        const node = rows[index].querySelector('.lyrics-pronunciation');
+                        const entering = node.hidden || node.getAnimations().length > 0;
+                        const opacity = node.hidden ? 0 : Number(getComputedStyle(node).opacity);
+                        node.getAnimations().forEach(animation => animation.cancel());
+                        const entry = entries[index] || {text: '', words: []};
+                        const words = pronunciationWords(entry.text, entry.words);
+                        line.displayPronunciationWords = words;
+                        node.replaceChildren();
+                        if (words.length) appendTimedWords(node, words);
+                        else node.textContent = entry.text || '';
+                        node.hidden = !currentLanguagePreferences.pronunciation || !node.textContent;
+                        if (entering && !node.hidden && !reducedMotion.matches) {
+                            node.animate([{opacity}, {opacity: 1}], {duration: 180, easing: 'ease-out'});
+                        }
+                    }
+                });
+                startWordSyncLoop();
+            }
+
+            async function updatePronunciation() {
+                const token = ++pronunciationGeneration;
+                const lines = activeLines;
+                updateLanguageButtons();
+                cancelScroll();
+                if (!currentLanguagePreferences.pronunciation) {
+                    const animations = [];
+                    overlay.querySelectorAll('.lyrics-pronunciation').forEach(node => {
+                        const opacity = Number(getComputedStyle(node).opacity);
+                        node.getAnimations().forEach(animation => animation.cancel());
+                        if (!node.hidden && !reducedMotion.matches) {
+                            animations.push(node.animate([{opacity}, {opacity: 0}], {duration: 180, fill: 'forwards'}));
+                        }
+                    });
+                    if (animations.length) await Promise.allSettled(animations.map(animation => animation.finished));
+                    if (token === pronunciationGeneration && !lifetime.signal.aborted && activeLines === lines) {
+                        paintPronunciation(lines, []);
+                    }
+                    animations.forEach(animation => animation.cancel());
+                    return;
+                }
+                const key = JSON.stringify(lines.map(line => [line.text, line.words, line.pronunciation, line.pronunciationWords, line.credit]));
+                if (pronunciationCache.has(key)) { paintPronunciation(lines, pronunciationCache.get(key)); return; }
+                const entries = lines.map(line => ({
+                    text: !line.credit && hasNonLatin(line.text) ? line.pronunciation || '' : '',
+                    words: line.pronunciationWords || []
+                }));
+                paintPronunciation(lines, entries);
+                if (!lines.length) return;
+                const needed = lines.map((line, i) => i).filter(i => !lines[i].credit && hasNonLatin(lines[i].text)
+                    && (!entries[i].text || (!pronunciationWords(entries[i].text, entries[i].words).length && lines[i].words?.length)));
+                try {
+                    if (needed.length) {
+                        const reply = await window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'pronunciation',
+                            texts: needed.map(i => lines[i].text), words: needed.map(i => lines[i].words || []),
+                            pronunciations: needed.map(i => entries[i].text)});
+                        if (token !== pronunciationGeneration || lifetime.signal.aborted || activeLines !== lines) return;
+                        needed.forEach((index, i) => entries[index] = reply.lines?.[i] || entries[index]);
+                    }
+                    if (token !== pronunciationGeneration || lifetime.signal.aborted || activeLines !== lines) return;
+                    paintPronunciation(lines, entries);
+                    pronunciationCache.set(key, entries);
+                    if (pronunciationCache.size > 30) pronunciationCache.delete(pronunciationCache.keys().next().value);
+                } catch (_) {
+                    if (token === pronunciationGeneration && !lifetime.signal.aborted && activeLines === lines) {
+                        overlay.querySelector('.lyrics-feedback').textContent = 'Pronunciation is unavailable for some lines.';
+                    }
+                }
+            }
+
+            async function updateTranslation() {
+                const token = ++translationGeneration;
+                const lines = activeLines;
+                window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'cancel'}).catch(() => {});
+                updateLanguageButtons();
+                paintTranslations(lines, []);
+                const button = overlay.querySelector('.lyrics-translate-button');
+                button.setAttribute('aria-busy', 'false');
+                translationNote('');
+                if (!currentLanguagePreferences.translate || !lines.length) return;
+                button.setAttribute('aria-busy', 'true');
+                translationNote('Checking languages…');
+                try {
+                    await ensureLanguages();
+                    if (token !== translationGeneration || lifetime.signal.aborted || activeLines !== lines) return;
+                    const target = languagePreferences.target;
+                    const key = JSON.stringify([target, lines.map(line => [line.text, line.translations, line.credit])]);
+                    if (translationCache.has(key)) {
+                        const cached = translationCache.get(key);
+                        paintTranslations(lines, cached.texts); translationNote(cached.note); return;
+                    }
+                    const texts = lines.map(line => line.credit ? '' : embeddedTranslation(line, target));
+                    paintTranslations(lines, texts);
+                    const needed = lines.map((line, i) => i).filter(i => !lines[i].credit && !texts[i]);
+                    let note = 'Translation from lyric source.';
+                    if (needed.length) {
+                        const reply = await window.webkit.messageHandlers.musicLyricsLanguage.postMessage({action: 'translate', target, token, texts: needed.map(i => lines[i].text)});
+                        if (token !== translationGeneration || lifetime.signal.aborted || activeLines !== lines || reply.status === 'cancelled') return;
+                        needed.forEach((index, i) => texts[index] = reply.texts?.[i] || '');
+                        note = reply.message || 'Translated on your Mac.';
+                        paintTranslations(lines, texts);
+                        translationNote(note);
+                        if (reply.message) return;
+                    }
+                    translationNote(note);
+                    translationCache.set(key, {texts, note});
+                    if (translationCache.size > 30) translationCache.delete(translationCache.keys().next().value);
+                } catch (error) {
+                    if (token === translationGeneration && !lifetime.signal.aborted && activeLines === lines) translationNote(`Translation unavailable: ${error.message}`);
+                } finally {
+                    if (token === translationGeneration && !lifetime.signal.aborted) button.setAttribute('aria-busy', 'false');
+                }
+            }
+
             function formatOffset(value) {
                 const seconds = value / 1000;
                 return `${seconds > 0 ? '+' : ''}${seconds.toFixed(value % 10 === 0 ? 2 : 3)} s`;
@@ -693,6 +1075,9 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 cancelScroll();
                 stopWordSyncLoop();
                 activeLines = [];
+                translationGeneration++;
+                pronunciationGeneration++;
+                translationNote('');
                 activeIndex = -1;
                 panel?.classList.remove('music-custom-lyrics-active');
                 overlay.classList.add('is-notice');
@@ -822,6 +1207,36 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 return lines;
             }
 
+            function appendTimedWords(container, words) {
+                for (const word of words) {
+                    const segments = Array.from(graphemeSegmenter.segment(word.word), item => item.segment);
+                    let first = 0;
+                    while (first < segments.length && segments[first].trim() === '') {
+                        container.append(document.createTextNode(segments[first++]));
+                    }
+                    let last = segments.length;
+                    while (last > first && segments[last - 1].trim() === '') last--;
+                    const wordSpan = document.createElement('span');
+                    wordSpan.className = 'lyrics-word';
+                    for (const segment of segments.slice(first, last)) {
+                        if (segment.trim() === '') {
+                            wordSpan.append(document.createTextNode(segment));
+                        } else {
+                            const letter = document.createElement('span');
+                            letter.className = 'lyrics-letter';
+                            letter.textContent = segment;
+                            wordSpan.append(letter);
+                        }
+                    }
+                    wordSpan.dataset.start = String(word.start_time);
+                    wordSpan.dataset.end = String(word.end_time);
+                    container.append(wordSpan);
+                    for (const segment of segments.slice(last)) {
+                        container.append(document.createTextNode(segment));
+                    }
+                }
+            }
+
             function renderLines(lines) {
                 cancelScroll();
                 stopWordSyncLoop();
@@ -866,33 +1281,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                             }
                         });
                         if (line.words && line.words.length > 0) {
-                            for (const word of line.words) {
-                                const segments = Array.from(graphemeSegmenter.segment(word.word), item => item.segment);
-                                let first = 0;
-                                while (first < segments.length && segments[first].trim() === '') {
-                                    button.append(document.createTextNode(segments[first++]));
-                                }
-                                let last = segments.length;
-                                while (last > first && segments[last - 1].trim() === '') last--;
-                                const wordSpan = document.createElement('span');
-                                wordSpan.className = 'lyrics-word';
-                                for (const segment of segments.slice(first, last)) {
-                                    if (segment.trim() === '') {
-                                        wordSpan.append(document.createTextNode(segment));
-                                    } else {
-                                        const letter = document.createElement('span');
-                                        letter.className = 'lyrics-letter';
-                                        letter.textContent = segment;
-                                        wordSpan.append(letter);
-                                    }
-                                }
-                                wordSpan.dataset.start = String(word.start_time);
-                                wordSpan.dataset.end = String(word.end_time);
-                                button.append(wordSpan);
-                                for (const segment of segments.slice(last)) {
-                                    button.append(document.createTextNode(segment));
-                                }
-                            }
+                            appendTimedWords(button, line.words);
                         } else {
                             button.textContent = line.text;
                         }
@@ -914,6 +1303,15 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     } else {
                         row.textContent = line.text;
                     }
+                    if (!line.credit) {
+                        for (const kind of ['pronunciation', 'translation']) {
+                            const auxiliary = document.createElement('span');
+                            auxiliary.className = `lyrics-${kind}`;
+                            auxiliary.dir = 'auto';
+                            auxiliary.hidden = true;
+                            row.append(auxiliary);
+                        }
+                    }
                     list.append(row);
                 }
                 // Reset after the scroller is visible; writes while hidden cannot clear its saved position.
@@ -921,6 +1319,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 updateActiveLine(true, true);
                 if (restoreFocus) scroll.focus({preventScroll: true});
                 startWordSyncLoop();
+                updatePronunciation();
+                updateTranslation();
             }
 
             function cancelScroll() {
@@ -947,18 +1347,11 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 scrollFrame = requestAnimationFrame(step);
             }
 
-            function updateActiveWords(time) {
-                if (activeIndex < 0 || !activeLines[activeIndex]) return;
-                const line = activeLines[activeIndex];
-                if (!line.words || !line.words.length) return;
-                const rows = overlay?.querySelectorAll('.lyrics-line');
-                const row = rows?.[activeIndex];
-                if (!row) return;
-                const wordSpans = row.querySelectorAll('.lyrics-word');
-                if (!wordSpans.length) return;
-
-                for (let i = 0; i < line.words.length; i++) {
-                    const w = line.words[i];
+            function updateWordSpans(container, words, time) {
+                const wordSpans = container?.querySelectorAll('.lyrics-word');
+                if (!wordSpans?.length) return;
+                for (let i = 0; i < words.length; i++) {
+                    const w = words[i];
                     const span = wordSpans[i];
                     if (!span) continue;
                     const letters = span.querySelectorAll('.lyrics-letter');
@@ -995,7 +1388,16 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
             }
 
-            function updateActiveLine(forceScroll = false, immediate = false) {
+            function updateActiveWords(time) {
+                if (activeIndex < 0 || !activeLines[activeIndex]) return;
+                const line = activeLines[activeIndex];
+                const row = overlay?.querySelectorAll('.lyrics-line')[activeIndex];
+                if (!row) return;
+                updateWordSpans(row.querySelector('.lyrics-seek'), line.words || [], time);
+                updateWordSpans(row.querySelector('.lyrics-pronunciation'), line.displayPronunciationWords || [], time);
+            }
+
+            function updateActiveLine(forceScroll = false, immediate = false, refreshLayout = false) {
                 if (!overlay || overlay.hidden || !activeLines.length) return;
                 if (activeLines.every(line => line.time == null)) return;
                 const current = mediaElement()?.currentTime;
@@ -1007,7 +1409,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (activeLines[index].time == null || activeLines[index].time <= time) next = index;
                     else break;
                 }
-                if (next === activeIndex && !forceScroll) {
+                if (next === activeIndex && !forceScroll && !refreshLayout) {
                     updateActiveWords(time);
                     return;
                 }
@@ -1035,16 +1437,19 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     }
                 });
                 updateActiveWords(time);
-                list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - rows[0].offsetHeight) / 2)}px`;
-                list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - rows[rows.length - 1].offsetHeight) / 2)}px`;
+                if (refreshLayout || forceScroll || Date.now() > userScrollUntil) {
+                    list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - (rows[0].querySelector('.lyrics-seek') || rows[0]).offsetHeight) / 2)}px`;
+                    const last = rows[rows.length - 1];
+                    list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - (last.querySelector('.lyrics-seek') || last).offsetHeight) / 2)}px`;
+                }
                 if (activeIndex < 0) {
                     cancelScroll();
                     scroll.scrollTo({top: 0, behavior: 'instant'});
                     return;
                 }
-                if (forceScroll || Date.now() > userScrollUntil) {
+                if (!refreshLayout && (forceScroll || Date.now() > userScrollUntil)) {
                     const row = rows[activeIndex];
-                    const bounds = row.getBoundingClientRect();
+                    const bounds = (row.querySelector('.lyrics-seek') || row).getBoundingClientRect();
                     const verticalTransform = new DOMMatrix(getComputedStyle(row).transform).m42;
                     scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2 - verticalTransform
                         - scroll.getBoundingClientRect().top - scroll.clientHeight / 2, immediate);
@@ -1054,7 +1459,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let wordFrame = 0;
             function startWordSyncLoop() {
                 if (wordFrame || lifetime.signal.aborted) return;
-                const hasWords = activeLines.some(l => l.words && l.words.length > 0);
+                const hasWords = activeLines.some(line => line.words?.length || line.displayPronunciationWords?.length);
                 if (!hasWords) return;
                 function step() {
                     wordFrame = 0;
@@ -1130,6 +1535,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
 
             function displayLyrics(result, track) {
                 const identity = offsetIdentity(track);
+                restoreSongLanguagePreferences(track);
                 const preferred = savedProviders[identity] || '';
                 const selected = result.alternatives.find(item => item.source === preferred) || result;
                 const select = overlay.querySelector('.lyrics-provider-select');
@@ -1162,6 +1568,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const track = trackInfo();
                 if (!track) {
                     if (trackKey) cancelLookup();
+                    restoreSongLanguagePreferences(null);
                     trackKey = '';
                     loadingKey = '';
                     completedKey = '';
@@ -1178,6 +1585,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (!force && key === trackKey && (activeLines.length || loadingKey === key || completedKey === key)) return;
                 if (key !== trackKey) {
                     cancelLookup();
+                    restoreSongLanguagePreferences(track);
                     closeSettings();
                     userScrollUntil = 0;
                     trackKey = key;
@@ -1264,7 +1672,9 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             }
 
             const resizeObserver = new ResizeObserver(() => {
-                if (overlay) overlay.querySelector('.lyrics-settings-panel').style.maxHeight = `${Math.max(0, overlay.clientHeight - 58)}px`;
+                if (overlay) overlay.querySelectorAll('.lyrics-settings-panel').forEach(menu => {
+                    menu.style.maxHeight = `${Math.max(0, overlay.clientHeight - 58)}px`;
+                });
                 updateActiveLine(true);
             });
             const observer = new MutationObserver(records => {
@@ -1294,7 +1704,12 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (document.hidden) cancelContentTransition();
                 else schedule();
             }, {signal: lifetime.signal});
-            window.musicCustomLyrics = {stop() {
+            window.musicCustomLyrics = {translationStatus(token, phase) {
+                if (token !== translationGeneration || !currentLanguagePreferences.translate || lifetime.signal.aborted) return;
+                if (overlay?.querySelector('.lyrics-translate-button').getAttribute('aria-busy') !== 'true') return;
+                const messages = {checking: 'Checking languages…', download: 'Waiting for language download…', translating: 'Translating…'};
+                if (messages[phase]) translationNote(messages[phase]);
+            }, stop() {
                 stopWordSyncLoop();
                 cancelLookup();
                 cancelScroll();

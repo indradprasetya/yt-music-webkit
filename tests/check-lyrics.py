@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory(prefix="music-lyrics-check-") as directory:
     source = work / "Sources" / "LyricsCheck"
     source.mkdir(parents=True)
     for path in (root / "Music/MusicLyricsProvider.swift", root / "Music/MusicLyrics.swift",
-                 root / "Music/MusicTTML.swift"):
+                 root / "Music/MusicTTML.swift", root / "Music/MusicLyricsTranslation.swift"):
         shutil.copy2(path, source / path.name)
     shutil.copy2(root / "tests/lyrics-fixture.swift", source / "main.swift")
     (work / "Package.swift").write_text('''// swift-tools-version: 5.9
@@ -21,18 +21,20 @@ import PackageDescription
 
 let package = Package(
     name: "LyricsCheck",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("15.4")],
     dependencies: [.package(url: "https://github.com/jpsim/Yams.git", exact: "5.4.0")],
     targets: [.executableTarget(name: "LyricsCheck", dependencies: [.product(name: "Yams", package: "Yams")])],
     swiftLanguageVersions: [.v5]
 )
 ''')
     variants = [sys.argv[1:]] if len(sys.argv) > 1 else [
-        ["--providers-only"], ["--metadata-only"], ["--amll-only"], ["--five-sources-only"],
+        ["--providers-only"], ["--metadata-only"], ["--amll-only"], ["--translation-data-only"], ["--language-ui-only"], ["--pronunciation-ui-only"], ["--pronunciation-scroll-only"], ["--five-sources-only"],
         ["--five-ui-only"], ["--provider-choice-only"], ["--align-ui-only"], ["--timing-input-only"], ["--blank-lines-only"],
         ["--source-offsets-only"], ["--mode-offsets-only"], ["--plain-ui-only"], ["--feedback-ui-only"],
         [], ["--english"], ["--media-session"]]
+    environment = dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer")
+    subprocess.run(["xcrun", "swift", "build", "--package-path", str(work)],
+                   check=True, timeout=360, env=environment)
     for arguments in variants:
-        subprocess.run(["xcrun", "swift", "run", "--package-path", str(work), "LyricsCheck", *arguments],
-                       check=True, timeout=180,
-                       env=dict(os.environ, DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"))
+        subprocess.run(["xcrun", "swift", "run", "--skip-build", "--package-path", str(work), "LyricsCheck", *arguments],
+                       check=True, timeout=180, env=environment)

@@ -335,6 +335,7 @@ final class MusicApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDel
         }
         window.center()
         window.contentView = TitlebarBackgroundView(webView: webView)
+        lyrics.attach(to: window.contentView!)
         window.delegate = self
         updates = MusicUpdates()
         makeMenu()
