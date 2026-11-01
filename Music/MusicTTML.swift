@@ -240,6 +240,7 @@ final class MusicTTML: NSObject, XMLParserDelegate {
                 ["word": $0.text, "start_time": $0.start, "end_time": $0.end]
             } : []
             var line: [String: Any] = ["time": begin, "text": value, "words": timedWords, "credit": false]
+            if finish > begin, end != nil || !timedWords.isEmpty { line["endTime"] = finish }
             let translated = (headerTranslations[lineKey] ?? [:]).merging(translations) { _, inline in inline }
             let romanized = pronunciation.isEmpty ? headerPronunciations[lineKey] ?? "" : pronunciation
             let romanizedWords = pronunciation.isEmpty ? headerPronunciationWords[lineKey] ?? [] : pronunciationWords

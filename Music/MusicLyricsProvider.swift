@@ -481,7 +481,9 @@ final class MusicLyricsProvider {
                 }
                 if words.compactMap({ $0["word"] as? String }).joined() != text { words = [] }
             }
-            lines.append(["time": start, "text": text, "words": words, "credit": false])
+            var parsed: [String: Any] = ["time": start, "text": text, "words": words, "credit": false]
+            if let explicitEnd = line["end"] as? Int, explicitEnd > start { parsed["endTime"] = explicitEnd }
+            lines.append(parsed)
         }
         guard !lines.isEmpty else { return [] }
         lines.sort { ($0["time"] as! Int) < ($1["time"] as! Int) }
@@ -530,7 +532,11 @@ final class MusicLyricsProvider {
                 }
                 if !valid { parsedWords = [] }
             }
-            return ["time": line.startMS, "text": line.text, "words": parsedWords, "credit": false]
+            var parsed: [String: Any] = ["time": line.startMS, "text": line.text, "words": parsedWords, "credit": false]
+            if let end = line.endMS, end > line.startMS, Double(end) <= durationLimit {
+                parsed["endTime"] = end
+            }
+            return parsed
         }
         return (parsedLines, file.plain ?? "")
     }

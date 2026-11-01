@@ -410,6 +410,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     position: relative; padding-inline-end: 48px;
                 }
                 #music-custom-lyrics .lyrics-line + .lyrics-line { margin-top: 24px; }
+                #music-custom-lyrics .lyrics-pause:not([hidden]) {
+                    display: flex; align-items: center; gap: 10px; height: 34px; margin: 24px 0;
+                }
+                #music-custom-lyrics .lyrics-pause span {
+                    width: 10px; height: 10px; border-radius: 50%; background: #f5f5f5;
+                }
+                #music-custom-lyrics .lyrics-pause + .lyrics-line { margin-top: 24px; }
                 #music-custom-lyrics .lyrics-pronunciation,
                 #music-custom-lyrics .lyrics-translation {
                     display: block; margin-top: 5px; font-size: .64em; font-weight: 500;
@@ -1197,6 +1204,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         lines.push({
                             time: lineStart,
                             duration: lineDuration,
+                            endTime: lineStart + lineDuration,
                             text,
                             words,
                             credit: false
@@ -1237,6 +1245,23 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
             }
 
+            function lyricPauses(lines) {
+                const pauses = [];
+                let coveredUntil = 0;
+                let known = true;
+                for (const [index, line] of lines.entries()) {
+                    if (line.credit) continue;
+                    if (!Number.isFinite(line.time)) return [];
+                    if (known && line.time - coveredUntil >= 5000) {
+                        pauses.push({index, start: coveredUntil, end: line.time});
+                    }
+                    // An unknown vocal ending cannot safely establish an instrumental gap.
+                    if (!Number.isFinite(line.endTime) || line.endTime <= line.time) known = false;
+                    else coveredUntil = Math.max(coveredUntil, line.endTime);
+                }
+                return pauses;
+            }
+
             function renderLines(lines) {
                 cancelScroll();
                 stopWordSyncLoop();
@@ -1257,7 +1282,24 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 list.style.paddingBlock = '';
                 message.hidden = true;
                 scroll.hidden = false;
+                const pauses = new Map(lyricPauses(lines).map(pause => [pause.index, pause]));
                 for (const [index, line] of lines.entries()) {
+                    const pause = pauses.get(index);
+                    if (pause) {
+                        const indicator = document.createElement('p');
+                        indicator.className = 'lyrics-pause';
+                        indicator.hidden = true;
+                        indicator.dataset.start = String(pause.start);
+                        indicator.dataset.end = String(pause.end);
+                        indicator.setAttribute('role', 'listitem');
+                        indicator.setAttribute('aria-label', 'Instrumental break before next lyric');
+                        for (let dot = 0; dot < 3; dot++) {
+                            const span = document.createElement('span');
+                            span.setAttribute('aria-hidden', 'true');
+                            indicator.append(span);
+                        }
+                        list.append(indicator);
+                    }
                     const row = document.createElement('p');
                     row.className = line.credit ? 'lyrics-line is-credit' : 'lyrics-line';
                     row.setAttribute('role', 'listitem');
@@ -1397,6 +1439,24 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 updateWordSpans(row.querySelector('.lyrics-pronunciation'), line.displayPronunciationWords || [], time);
             }
 
+            function updatePause(time) {
+                let active = null;
+                for (const indicator of overlay.querySelectorAll('.lyrics-pause')) {
+                    const end = Number(indicator.dataset.end);
+                    const visible = time >= Number(indicator.dataset.start) && time < end;
+                    indicator.hidden = !visible;
+                    if (!visible) continue;
+                    active = indicator;
+                    indicator.querySelectorAll('span').forEach((dot, index) => {
+                        const fill = Math.max(0, Math.min(1, (time - (end - 3000 + index * 1000)) / 1000));
+                        dot.style.opacity = String(.3 + .7 * fill);
+                        const pulse = reducedMotion.matches ? 1 : 1 + .12 * Math.sin(time / 1000 * Math.PI * 2 - index);
+                        dot.style.transform = `scale(${pulse})`;
+                    });
+                }
+                return active;
+            }
+
             function updateActiveLine(forceScroll = false, immediate = false, refreshLayout = false) {
                 if (!overlay || overlay.hidden || !activeLines.length) return;
                 if (activeLines.every(line => line.time == null)) return;
@@ -1409,7 +1469,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (activeLines[index].time == null || activeLines[index].time <= time) next = index;
                     else break;
                 }
-                if (next === activeIndex && !forceScroll && !refreshLayout) {
+                const previousPause = overlay.querySelector('.lyrics-pause:not([hidden])');
+                const pause = updatePause(time);
+                const pauseChanged = pause !== previousPause;
+                if (next === activeIndex && !pauseChanged && !forceScroll && !refreshLayout) {
                     updateActiveWords(time);
                     return;
                 }
@@ -1418,7 +1481,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 const list = overlay.querySelector('.lyrics-lines');
                 rows.forEach((row, index) => {
-                    const isCurrent = index === activeIndex;
+                    const isCurrent = index === activeIndex && !pause;
                     row.classList.toggle('is-current', isCurrent);
                     if (isCurrent) {
                         row.setAttribute('aria-current', 'true');
@@ -1438,17 +1501,17 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 });
                 updateActiveWords(time);
                 if (refreshLayout || forceScroll || Date.now() > userScrollUntil) {
-                    list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - (rows[0].querySelector('.lyrics-seek') || rows[0]).offsetHeight) / 2)}px`;
+                    list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - Math.min((rows[0].querySelector('.lyrics-seek') || rows[0]).offsetHeight, pause?.offsetHeight ?? Infinity)) / 2)}px`;
                     const last = rows[rows.length - 1];
                     list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - (last.querySelector('.lyrics-seek') || last).offsetHeight) / 2)}px`;
                 }
-                if (activeIndex < 0) {
+                if (activeIndex < 0 && !pause) {
                     cancelScroll();
                     scroll.scrollTo({top: 0, behavior: 'instant'});
                     return;
                 }
                 if (!refreshLayout && (forceScroll || Date.now() > userScrollUntil)) {
-                    const row = rows[activeIndex];
+                    const row = pause || rows[activeIndex];
                     const bounds = (row.querySelector('.lyrics-seek') || row).getBoundingClientRect();
                     const verticalTransform = new DOMMatrix(getComputedStyle(row).transform).m42;
                     scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2 - verticalTransform
@@ -1460,12 +1523,12 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             function startWordSyncLoop() {
                 if (wordFrame || lifetime.signal.aborted) return;
                 const hasWords = activeLines.some(line => line.words?.length || line.displayPronunciationWords?.length);
-                if (!hasWords) return;
+                if (!hasWords && !overlay?.querySelector('.lyrics-pause')) return;
                 function step() {
                     wordFrame = 0;
                     if (lifetime.signal.aborted) return;
                     const media = mediaElement();
-                    if (media && !media.paused && !media.ended) {
+                    if (media && !media.paused && !media.ended && !overlay?.hidden && !document.hidden) {
                         updateActiveLine();
                         wordFrame = requestAnimationFrame(step);
                     }
@@ -1668,6 +1731,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     loadTrack();
                     panel.classList.toggle('music-custom-lyrics-active', activeLines.length > 0);
                     updateActiveLine(returning, returning);
+                    startWordSyncLoop();
                 });
             }
 
@@ -1697,7 +1761,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             for (const event of ['play', 'loadedmetadata', 'durationchange', 'emptied']) {
                 document.addEventListener(event, schedule, {capture: true, signal: lifetime.signal});
             }
-            for (const event of ['timeupdate', 'seeking', 'seeked']) {
+            for (const event of ['timeupdate', 'seeking', 'seeked', 'pause']) {
                 document.addEventListener(event, () => updateActiveLine(), {capture: true, signal: lifetime.signal});
             }
             document.addEventListener('visibilitychange', () => {

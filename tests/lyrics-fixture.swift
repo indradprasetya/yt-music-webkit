@@ -54,6 +54,8 @@ final class LyricsTransport: URLProtocol {
             if title == "Better miss" || (title == "Better words" && parameter("al") != "Album") {
                 status = 401
                 body = ["error": "API key required", "message": "Uncached queries require a valid API key"]
+            } else if title == "Pause demo" {
+                body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='10' end='12'>First vocal with a long line that wraps over several lines in a narrow lyrics panel</p><p begin='25' end='28'>Next vocal</p><p begin='30' end='32'>Short gap</p></body></tt>"]
             } else if title == "Pronunciation generated" {
                 body = ["ttml": "<tt xmlns='http://www.w3.org/ns/ttml'><body><p begin='1' end='5'><span begin='1' end='3'>夜</span><span begin='3' end='5'>だ</span></p></body></tt>"]
             } else if title == "Pronunciation layout" {
@@ -742,6 +744,38 @@ setbuf(stdout, nil)
         let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
         try bitmap.representation(using: .png, properties: [:])!
             .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
+    }
+    if CommandLine.arguments.contains("--pause-ui-only") {
+        try await expect("!!document.querySelector('ytmusic-player-bar .title') && !!document.querySelector('.lyrics-line')", "Wait for fixture page and lyrics")
+        try await changeTrack("Pause demo")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('Better Lyrics')", "Load timed pause fixture")
+        func seekPause(_ seconds: Double) async throws {
+            _ = try await js("fixtureTime = \(seconds); document.querySelector('video').dispatchEvent(new Event('seeking')); null")
+        }
+        _ = try await js("document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; document.querySelector('#tab-renderer').style.width = '280px'; null")
+        try await seekPause(5)
+        try await expect("document.querySelectorAll('.lyrics-pause:not([hidden])').length === 1", "Show intro pause")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause:not([hidden])').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center intro even when the first lyric wraps tall")
+        try await seekPause(10)
+        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Hide pause at vocal start")
+        try await seekPause(15)
+        try await expect("document.querySelectorAll('.lyrics-pause:not([hidden])').length === 1 && document.querySelectorAll('.lyrics-line').length === 3", "Show known middle gap without changing lyric indices")
+        try await seekPause(23.5)
+        try await expect("document.querySelector('.lyrics-pause:not([hidden]) span').style.opacity === '1'", "Fill first dot during final countdown")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause:not([hidden])').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center the active pause indicator")
+        try await snapshot("lyrics-pause-countdown")
+        try await seekPause(25)
+        try await expect("!document.querySelector('.lyrics-pause:not([hidden])') && document.querySelector('.lyrics-line.is-current').textContent.includes('Next vocal')", "Resume correct lyric at boundary")
+        try await seekPause(29)
+        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Skip short gaps")
+        try await seekPause(40)
+        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "No countdown without another vocal")
+        try await changeTrack("Fixture")
+        try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase')", "Return to start-only LRC")
+        try await seekPause(6)
+        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Do not guess LRC vocal endings")
+        print("PASS: intro, known gaps, countdown, seeks, boundaries, short gaps and LRC fallback")
+        return
     }
     if CommandLine.arguments.contains("--language-ui-only") {
         try await expect("!!document.querySelector('.lyrics-translate-button') && !!document.querySelector('.lyrics-pronunciation-button')", "Show separate translation and pronunciation controls")
