@@ -473,13 +473,12 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-align {
                     position: absolute; inset-inline-end: 0; top: 50%; transform: translateY(-50%);
                     display: grid; place-items: center; width: 36px; height: 36px;
-                    padding: 0; border: 0; border-radius: 50%; color: rgba(255,255,255,.8);
+                    padding: 0; border: 0; border-radius: 50%; color: rgba(255,255,255,.42);
                     background: transparent; cursor: pointer; opacity: 0; pointer-events: none;
                     transition: opacity .2s ease;
                 }
-                #music-custom-lyrics .lyrics-scroll.is-sync-active .lyrics-align,
-                #music-custom-lyrics .lyrics-scroll:focus-visible .lyrics-align,
-                #music-custom-lyrics .lyrics-scroll:has(:focus-visible) .lyrics-align { opacity: 1; pointer-events: auto; }
+                #music-custom-lyrics .lyrics-line.is-sync-hovered > .lyrics-align,
+                #music-custom-lyrics .lyrics-line:has(:focus-visible) > .lyrics-align { opacity: 1; pointer-events: auto; }
                 #music-custom-lyrics .lyrics-align:hover,
                 #music-custom-lyrics .lyrics-align:focus-visible { color: #fff; background: rgba(255,255,255,.12); }
                 #music-custom-lyrics .lyrics-align:focus-visible { outline-offset: -2px; }
@@ -610,7 +609,6 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let offset = 0;
             let retryAfter = 0;
             let userScrollUntil = 0;
-            let syncIdleTimer = 0;
             let syncResumeTimer = 0;
             let syncScrollPaused = false;
             let syncPointerX = null;
@@ -622,14 +620,27 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
             const graphemeSegmenter = new Intl.Segmenter(undefined, {granularity: 'grapheme'});
 
-            function hideSyncControls() {
-                clearTimeout(syncIdleTimer);
+            function updateSyncControl() {
                 const scroll = overlay?.querySelector('.lyrics-scroll');
-                if (scroll?.querySelector('.lyrics-align:active')) {
-                    syncIdleTimer = setTimeout(hideSyncControls, 2000);
-                    return;
+                const previous = scroll?.querySelector('.lyrics-line.is-sync-hovered');
+                let row = syncPointerX == null || syncPointerY == null ? null
+                    : document.elementFromPoint(syncPointerX, syncPointerY)?.closest('.lyrics-line');
+                const button = scroll?.contains(row) ? row.querySelector('.lyrics-align') : null;
+                if (button) {
+                    const bounds = button.getBoundingClientRect();
+                    const viewport = scroll.getBoundingClientRect();
+                    const fade = scroll.clientHeight * .12;
+                    if (bounds.top < viewport.top + fade || bounds.bottom > viewport.top + scroll.clientHeight - fade) row = null;
+                } else row = null;
+                if (previous !== row) {
+                    previous?.classList.remove('is-sync-hovered');
+                    row?.classList.add('is-sync-hovered');
                 }
-                scroll?.classList.remove('is-sync-active');
+            }
+
+            function hideSyncControls() {
+                syncPointerX = syncPointerY = null;
+                updateSyncControl();
                 clearTimeout(syncResumeTimer);
                 syncResumeTimer = setTimeout(() => {
                     syncScrollPaused = false;
@@ -642,12 +653,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (event.type === 'pointermove' && event.clientX === syncPointerX && event.clientY === syncPointerY) return;
                 syncPointerX = event.clientX;
                 syncPointerY = event.clientY;
-                clearTimeout(syncIdleTimer);
                 clearTimeout(syncResumeTimer);
                 cancelScroll();
                 syncScrollPaused = true;
-                overlay.querySelector('.lyrics-scroll').classList.add('is-sync-active');
-                syncIdleTimer = setTimeout(hideSyncControls, 2000);
+                updateSyncControl();
             }
 
             function mediaElement() {
@@ -859,6 +868,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     scroll.addEventListener(event, showSyncControls, {signal: lifetime.signal});
                 }
                 scroll.addEventListener('pointerleave', hideSyncControls, {signal: lifetime.signal});
+                scroll.addEventListener('scroll', updateSyncControl, {passive: true, signal: lifetime.signal});
                 scroll.addEventListener('focusin', cancelScroll, {signal: lifetime.signal});
                 scroll.addEventListener('focusout', () => requestAnimationFrame(() => updateActiveLine(true)), {signal: lifetime.signal});
                 for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
@@ -966,6 +976,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (target > maximum) list.style.paddingBlockEnd = `${parseFloat(list.style.paddingBlockEnd) + target - maximum}px`;
                     scroll.scrollTop = Math.max(0, target);
                 }
+                updateSyncControl();
             }
 
             function paintTranslations(lines, texts) {
@@ -1413,6 +1424,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 // Reset after the scroller is visible; writes while hidden cannot clear its saved position.
                 scroll.scrollTo({top: 0, behavior: 'instant'});
                 updateActiveLine(true, true);
+                updateSyncControl();
                 if (restoreFocus) scroll.focus({preventScroll: true});
                 startWordSyncLoop();
                 updatePronunciation();
@@ -1818,6 +1830,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     menu.style.maxHeight = `${Math.max(0, overlay.clientHeight - 58)}px`;
                 });
                 updateActiveLine(true);
+                updateSyncControl();
             });
             const observer = new MutationObserver(records => {
                 const relevant = records.some(record => {
@@ -1852,7 +1865,6 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const messages = {checking: 'Checking languages…', download: 'Waiting for language download…', translating: 'Translating…'};
                 if (messages[phase]) translationNote(messages[phase]);
             }, stop() {
-                clearTimeout(syncIdleTimer);
                 clearTimeout(syncResumeTimer);
                 stopWordSyncLoop();
                 cancelLookup();
