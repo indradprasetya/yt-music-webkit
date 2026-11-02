@@ -754,26 +754,60 @@ setbuf(stdout, nil)
         }
         _ = try await js("document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; document.querySelector('#tab-renderer').style.width = '280px'; null")
         try await seekPause(5)
-        try await expect("document.querySelectorAll('.lyrics-pause:not([hidden])').length === 1", "Show intro pause")
-        try await expect("(() => { const row = document.querySelector('.lyrics-pause:not([hidden])').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center intro even when the first lyric wraps tall")
-        try await seekPause(10)
-        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Hide pause at vocal start")
+        try await expect("document.querySelectorAll('.lyrics-pause.is-visible').length === 1", "Show intro pause")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center intro even when the first lyric wraps tall")
+        let automaticStable = try await web.callAsyncJavaScript("""
+            const lyric = document.querySelector('.lyrics-seek');
+            const top = lyric.getBoundingClientRect().top;
+            fixtureTime = 10;
+            document.querySelector('video').dispatchEvent(new Event('seeking'));
+            return Math.abs(lyric.getBoundingClientRect().top - top) < 1;
+            """, arguments: [:], in: nil, contentWorld: .defaultClient)
+        assert(automaticStable as? Bool == true, "Dot removal must not jump the incoming lyric before normal following starts")
+        try await expect("!!document.querySelector('.lyrics-pause.is-visible') && !document.querySelector('.lyrics-pause[data-active=\"true\"]') && !!document.querySelector('.lyrics-line.is-current')", "Begin vocal highlighting while intro dots fade")
+        try await seekPause(10.7)
+        try await expect("!document.querySelector('.lyrics-pause.is-visible')", "Remove intro spacer after the fade")
         try await seekPause(15)
-        try await expect("document.querySelectorAll('.lyrics-pause:not([hidden])').length === 1 && document.querySelectorAll('.lyrics-line').length === 3", "Show known middle gap without changing lyric indices")
+        try await expect("document.querySelectorAll('.lyrics-pause.is-visible').length === 1 && document.querySelectorAll('.lyrics-line').length === 3", "Show known middle gap without changing lyric indices")
+        try await expect("(() => { const node = document.querySelector('.lyrics-pause.is-visible'); const next = node.nextElementSibling; return node.offsetHeight === 24 && parseFloat(getComputedStyle(node).marginTop) === 24 && parseFloat(getComputedStyle(next).marginTop) === 24; })()", "Match normal lyric spacing around dots")
+        try await expect("document.querySelector('.lyrics-align svg').getAttribute('viewBox') === '0 0 25 25' && document.querySelector('.lyrics-align svg path').getAttribute('stroke') === 'currentColor'", "Use supplied sync SVG with theme color")
         try await seekPause(23.5)
-        try await expect("document.querySelector('.lyrics-pause:not([hidden]) span').style.opacity === '1'", "Fill first dot during final countdown")
-        try await expect("(() => { const row = document.querySelector('.lyrics-pause:not([hidden])').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center the active pause indicator")
+        try await expect("document.querySelector('.lyrics-pause.is-visible span').style.opacity === '1'", "Fill first dot during final countdown")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center the active pause indicator")
         try await snapshot("lyrics-pause-countdown")
-        try await seekPause(25)
-        try await expect("!document.querySelector('.lyrics-pause:not([hidden])') && document.querySelector('.lyrics-line.is-current').textContent.includes('Next vocal')", "Resume correct lyric at boundary")
+        let stable = try await web.callAsyncJavaScript("""
+            const scroll = document.querySelector('.lyrics-scroll');
+            scroll.dispatchEvent(new WheelEvent('wheel'));
+            const middle = scroll.getBoundingClientRect().top + scroll.clientHeight / 2;
+            const anchor = [...document.querySelectorAll('.lyrics-seek')].find(node => node.getBoundingClientRect().bottom >= middle).closest('.lyrics-line');
+            const top = anchor.getBoundingClientRect().top;
+            fixtureTime = 25;
+            document.querySelector('video').dispatchEvent(new Event('seeking'));
+            const immediate = Math.abs(anchor.getBoundingClientRect().top - top) < 1;
+            fixtureTime = 25.325;
+            document.querySelector('video').dispatchEvent(new Event('timeupdate'));
+            const fading = document.querySelector('.lyrics-pause.is-visible');
+            const opacity = Number(getComputedStyle(fading).opacity);
+            const stableFade = opacity > 0 && opacity < 1 && fading.offsetHeight === 24
+                && Math.abs(anchor.getBoundingClientRect().top - top) < 1;
+            fixtureTime = 25.7;
+            document.querySelector('video').dispatchEvent(new Event('timeupdate'));
+            const removed = !document.querySelector('.lyrics-pause.is-visible');
+            await new Promise(resolve => setTimeout(resolve, 900));
+            const settled = anchor.getBoundingClientRect().top;
+            return {immediate, before: top, after: settled, stable: immediate && stableFade && removed && Math.abs(settled - top) < 1};
+            """, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let measured = stable as? [String: Any]
+        assert(measured?["stable"] as? Bool == true, "Removing dots must preserve the reading position: \(stable ?? "missing")")
+        try await expect("!document.querySelector('.lyrics-pause.is-visible') && document.querySelector('.lyrics-line.is-current').textContent.includes('Next vocal')", "Remove dots after fading without delaying vocal highlighting")
         try await seekPause(29)
-        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Skip short gaps")
+        try await expect("!document.querySelector('.lyrics-pause.is-visible')", "Do not retain dots after vocals resume")
         try await seekPause(40)
-        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "No countdown without another vocal")
+        try await expect("!document.querySelector('.lyrics-pause.is-visible')", "No countdown without another vocal")
         try await changeTrack("Fixture")
         try await expect("document.querySelector('.lyrics-source').textContent.includes('NetEase')", "Return to start-only LRC")
         try await seekPause(6)
-        try await expect("!document.querySelector('.lyrics-pause:not([hidden])')", "Do not guess LRC vocal endings")
+        try await expect("!document.querySelector('.lyrics-pause.is-visible')", "Do not guess LRC vocal endings")
         print("PASS: intro, known gaps, countdown, seeks, boundaries, short gaps and LRC fallback")
         return
     }
@@ -1123,6 +1157,19 @@ setbuf(stdout, nil)
                     && getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none';
             })()
             """, "Show animated, accessible loading feedback alongside native lyrics")
+        _ = try await js("""
+            const native = document.querySelector('#native-lyrics');
+            native.hidden = true;
+            const spinner = document.createElement('tp-yt-paper-spinner-lite');
+            spinner.style.cssText = 'display:block;width:28px;height:28px;margin:auto';
+            document.querySelector('#tab-renderer').append(spinner);
+            window.nativeSpinnerSize = [spinner.offsetWidth, spinner.offsetHeight];
+            spinner.remove();
+            native.hidden = false;
+            null
+            """)
+        try await expect("nativeSpinnerSize[0] === 28 && nativeSpinnerSize[1] === 28",
+                         "Keep the native loading spinner at its intrinsic size while looking up lyrics")
         try await snapshot("loading")
         try await expect("""
             !document.querySelector('.lyrics-scroll').hidden && lineIsCentered()

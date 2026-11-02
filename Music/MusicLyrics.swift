@@ -246,7 +246,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     display: flex !important; flex-direction: column !important;
                 }
                 #tab-renderer:has(> #music-custom-lyrics.is-notice:not([hidden])) > :not(#music-custom-lyrics) {
-                    min-height: 0; flex: 1 1 auto;
+                    min-height: 0;
                 }
                 #tab-renderer.music-custom-lyrics-active > :not(#music-custom-lyrics) { display: none !important; }
                 #tab-renderer.music-custom-lyrics-active { overflow: hidden !important; }
@@ -410,8 +410,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     position: relative; padding-inline-end: 48px;
                 }
                 #music-custom-lyrics .lyrics-line + .lyrics-line { margin-top: 24px; }
-                #music-custom-lyrics .lyrics-pause:not([hidden]) {
-                    display: flex; align-items: center; gap: 10px; height: 34px; margin: 24px 0;
+                #music-custom-lyrics .lyrics-pause { display: none; }
+                #music-custom-lyrics .lyrics-pause.is-visible {
+                    display: flex; flex-shrink: 0; align-items: center; gap: 10px;
+                    height: 24px; margin: 24px 0 0;
                 }
                 #music-custom-lyrics .lyrics-pause span {
                     width: 10px; height: 10px; border-radius: 50%; background: #f5f5f5;
@@ -570,7 +572,9 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     #music-custom-lyrics .lyrics-translation-spinner { animation: none; }
                     #music-custom-lyrics .lyrics-line,
                     #music-custom-lyrics .lyrics-seek,
-                    #music-custom-lyrics .lyrics-align { transition: none !important; }
+                    #music-custom-lyrics .lyrics-align,
+                    #music-custom-lyrics .lyrics-pause,
+                    #music-custom-lyrics .lyrics-pause + .lyrics-line { transition: none !important; }
                     #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-seek { transform: none; }
                     #music-custom-lyrics .lyrics-scroll { scroll-behavior: auto !important; }
                     #music-custom-lyrics .lyrics-line .lyrics-word { transition: none !important; text-shadow: none !important; filter: none !important; }
@@ -940,11 +944,11 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 return '';
             }
 
-            function refreshLyricsLayout(update) {
+            function refreshLyricsLayout(update, preferredAnchor = null) {
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 const lyrics = [...overlay.querySelectorAll('.lyrics-seek')];
                 const middle = scroll.getBoundingClientRect().top + scroll.clientHeight / 2;
-                const anchor = (Date.now() > userScrollUntil && overlay.querySelector('.lyrics-line.is-current .lyrics-seek'))
+                const anchor = preferredAnchor || (Date.now() > userScrollUntil && overlay.querySelector('.lyrics-line.is-current .lyrics-seek'))
                     || lyrics.find(node => node.getBoundingClientRect().bottom >= middle) || lyrics.at(-1);
                 const top = anchor?.getBoundingClientRect().top;
                 cancelScroll();
@@ -1335,7 +1339,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     if (pause) {
                         const indicator = document.createElement('p');
                         indicator.className = 'lyrics-pause';
-                        indicator.hidden = true;
+                        indicator.setAttribute('aria-hidden', 'true');
                         indicator.dataset.start = String(pause.start);
                         indicator.dataset.end = String(pause.end);
                         indicator.setAttribute('role', 'listitem');
@@ -1379,7 +1383,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         align.className = 'lyrics-align';
                         align.title = 'Sync this line to now';
                         align.setAttribute('aria-label', `Sync this line to now: ${line.text}`);
-                        align.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.34 6.34A8 8 0 0 1 20 12M20 7v5h-5M17.66 17.66A8 8 0 0 1 4 12M4 17v-5h5"/></svg>';
+                        align.innerHTML = '<svg aria-hidden="true" viewBox="0 0 25 25" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.5 4.5H12.5C8.08172 4.5 4.5 8.08172 4.5 12.5C4.5 15.6631 6.33576 18.3975 9 19.6958M11.5 20.5H12.5C16.9183 20.5 20.5 16.9183 20.5 12.5C20.5 9.33688 18.6642 6.60253 16 5.30423" stroke="currentColor" stroke-width="1.2"/><path d="M14 17.5619L11.5 20.5L14.5 23.0619M11 7.43811L13.5 4.50001L10.5 1.93811" stroke="currentColor" stroke-width="1.2"/></svg>';
                         align.addEventListener('click', () => {
                             const media = mediaElement();
                             if (!media || !Number.isFinite(media.currentTime) || media.currentTime < 0 || media.currentTime > media.duration) return;
@@ -1417,7 +1421,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 scrollFrame = 0;
             }
 
-            function scrollToPosition(scroll, target, immediate = false) {
+            function scrollToPosition(scroll, target, immediate = false, duration = 420) {
                 target = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, target));
                 if (scrollFrame && Math.abs(target - scrollTarget) < 1 && !reducedMotion.matches && !immediate) return;
                 cancelScroll();
@@ -1429,7 +1433,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 const started = performance.now();
                 function step(now) {
-                    const progress = reducedMotion.matches ? 1 : Math.min(1, Math.max(0, (now - started) / 420));
+                    const progress = reducedMotion.matches ? 1 : Math.min(1, Math.max(0, (now - started) / duration));
                     scroll.scrollTop = start + (target - start) * (1 - (1 - progress) ** 3);
                     scrollFrame = progress < 1 ? requestAnimationFrame(step) : 0;
                 }
@@ -1491,13 +1495,23 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 for (const indicator of overlay.querySelectorAll('.lyrics-pause')) {
                     const end = Number(indicator.dataset.end);
                     const visible = time >= Number(indicator.dataset.start) && time < end;
-                    if (!holdLayout) indicator.hidden = !visible;
-                    if (!visible) continue;
+                    const retained = time >= Number(indicator.dataset.start) && time < end + 650;
+                    const fade = Math.max(0, Math.min(1, (time - end) / 650));
+                    indicator.style.opacity = String(1 - fade * fade * (3 - 2 * fade));
+                    indicator.dataset.active = String(visible);
+                    if (!holdLayout) {
+                        indicator.classList.toggle('is-visible', retained);
+                        indicator.setAttribute('aria-hidden', String(!retained));
+                    }
+                    if (!visible) {
+                        if (retained) indicator.querySelectorAll('span').forEach(dot => { dot.style.opacity = '1'; });
+                        continue;
+                    }
                     active = indicator;
                     indicator.querySelectorAll('span').forEach((dot, index) => {
                         const fill = Math.max(0, Math.min(1, (time - (end - 3000 + index * 1000)) / 1000));
                         dot.style.opacity = String(.3 + .7 * fill);
-                        const pulse = reducedMotion.matches ? 1 : 1 + .12 * Math.sin(time / 1000 * Math.PI * 2 - index);
+                        const pulse = reducedMotion.matches ? 1 : 1 + .06 * Math.sin(time / 2000 * Math.PI * 2 - index * .5);
                         dot.style.transform = `scale(${pulse})`;
                     });
                 }
@@ -1518,10 +1532,21 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 const holdSync = syncScrollPaused || document.activeElement?.matches('.lyrics-align:focus-visible, .lyrics-seek:focus-visible');
-                const previousPause = overlay.querySelector('.lyrics-pause:not([hidden])');
+                const previousPause = overlay.querySelector('.lyrics-pause[data-active="true"]');
+                const layoutChanged = [...overlay.querySelectorAll('.lyrics-pause')].some(indicator => {
+                    const visible = time >= Number(indicator.dataset.start) && time < Number(indicator.dataset.end) + 650;
+                    return visible !== indicator.classList.contains('is-visible');
+                });
+                const pauseEnded = previousPause && time >= Number(previousPause.dataset.end);
+                const preservedPauseLayout = (layoutChanged || pauseEnded) && !refreshLayout && !holdSync;
+                if (preservedPauseLayout) {
+                    const anchor = Date.now() > userScrollUntil && next >= 0
+                        ? overlay.querySelectorAll('.lyrics-line')[next].querySelector('.lyrics-seek') : null;
+                    refreshLyricsLayout(() => updatePause(time), anchor);
+                }
                 const pause = updatePause(time, holdSync);
                 const pauseChanged = pause !== previousPause;
-                if (next === activeIndex && !pauseChanged && !forceScroll && !refreshLayout) {
+                if (next === activeIndex && !pauseChanged && !preservedPauseLayout && !forceScroll && !refreshLayout) {
                     updateActiveWords(time);
                     return;
                 }
@@ -1548,7 +1573,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     }
                 });
                 updateActiveWords(time);
-                if (!holdSync && (refreshLayout || forceScroll || Date.now() > userScrollUntil)) {
+                if (!preservedPauseLayout && !holdSync && (refreshLayout || forceScroll || Date.now() > userScrollUntil)) {
                     list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - Math.min((rows[0].querySelector('.lyrics-seek') || rows[0]).offsetHeight, pause?.offsetHeight ?? Infinity)) / 2)}px`;
                     const last = rows[rows.length - 1];
                     list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - (last.querySelector('.lyrics-seek') || last).offsetHeight) / 2)}px`;
@@ -1564,7 +1589,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     const bounds = target.getBoundingClientRect();
                     const verticalTransform = new DOMMatrix(getComputedStyle(target).transform).m42;
                     scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2 - verticalTransform
-                        - scroll.getBoundingClientRect().top - scroll.clientHeight / 2, immediate);
+                        - scroll.getBoundingClientRect().top - scroll.clientHeight / 2, immediate, pauseChanged ? 700 : 420);
                 }
             }
 
