@@ -595,6 +595,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             const savedProviders = \(providers);
             const languagePreferences = \(languages);
             const savedLanguagePreferences = \(trackLanguages);
+            // Temporarily hide translation while synced lyrics is in beta.
+            const translationEnabled = false;
             const currentLanguagePreferences = {translate: false, pronunciation: languagePreferences.pronunciation !== false};
             const translationCache = new Map();
             const pronunciationCache = new Map();
@@ -729,7 +731,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                         <button class="lyrics-toolbar-button lyrics-pronunciation-button" type="button" aria-label="Pronunciation" aria-pressed="false" title="Show pronunciation" hidden>
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4H3v16h3M18 4h3v16h-3M8 16l4-8 4 8M9.5 13h5"/></svg>
                         </button>
-                        <button class="lyrics-toolbar-button lyrics-translate-button" type="button" aria-label="Translate lyrics" aria-pressed="false" title="Show translation">
+                        <button class="lyrics-toolbar-button lyrics-translate-button" type="button" aria-label="Translate lyrics" aria-pressed="false" title="Show translation" ${translationEnabled ? '' : 'hidden'}>
                             <span class="lyrics-translation-spinner" aria-hidden="true"></span>
                             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.9 15.1 10.4 12.6l.1-.1A17.5 17.5 0 0 0 14.1 6H17V4h-7V2H8v2H1v2h11.2A15.8 15.8 0 0 1 9 11.4 15.6 15.6 0 0 1 6.7 8h-2a17.7 17.7 0 0 0 3 4.6L2.7 17.5l1.4 1.4L9 14l3.1 3.1.8-2ZM18.5 9h-2L12 21h2l1.1-3h4.8l1.1 3h2L18.5 9Zm-2.7 7 1.7-4.6 1.7 4.6h-3.4Z"/></svg>
                         </button>
@@ -765,7 +767,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                                 </div>
                                 <p class="lyrics-provider-note" id="music-lyrics-provider-note" role="status"></p>
                             </div>
-                            <div class="lyrics-translation-section">
+                            <div class="lyrics-translation-section" ${translationEnabled ? '' : 'hidden'}>
                                 <label class="lyrics-language-target" for="music-lyrics-language-target">Translate to</label>
                                 <div class="lyrics-language-control"><select class="lyrics-language-select" id="music-lyrics-language-target" aria-describedby="music-lyrics-language-note" disabled><option>Loading languages…</option></select>
                                 <svg class="lyrics-language-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></div>
@@ -796,7 +798,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     settings.style.maxHeight = `${Math.max(0, element.clientHeight - 58)}px`;
                     settings.hidden = !settings.hidden;
                     button.setAttribute('aria-expanded', String(!settings.hidden));
-                    if (!settings.hidden) ensureLanguages().catch(error => translationNote(error.message));
+                    if (translationEnabled && !settings.hidden) ensureLanguages().catch(error => translationNote(error.message));
                 });
                 element.querySelector('.lyrics-settings-panel .lyrics-close-button').addEventListener('click', () => closeSettings(true));
                 element.querySelector('.lyrics-language-system-settings').addEventListener('click', () => {
@@ -811,6 +813,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     updatePronunciation();
                 });
                 element.querySelector('.lyrics-translate-button').addEventListener('click', () => {
+                    if (!translationEnabled) return;
                     currentLanguagePreferences.translate = !currentLanguagePreferences.translate;
                     saveSongLanguagePreferences();
                     updateTranslation();
@@ -902,7 +905,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (identity === languageTrackKey) return;
                 languageTrackKey = identity;
                 const saved = savedLanguagePreferences[identity] || {};
-                currentLanguagePreferences.translate = saved.translate === true;
+                currentLanguagePreferences.translate = translationEnabled && saved.translate === true;
                 translationGeneration++;
                 pronunciationGeneration++;
                 translationNote('');
@@ -1073,7 +1076,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const button = overlay.querySelector('.lyrics-translate-button');
                 button.setAttribute('aria-busy', 'false');
                 translationNote('');
-                if (!currentLanguagePreferences.translate || !lines.length) return;
+                if (!translationEnabled || !currentLanguagePreferences.translate || !lines.length) return;
                 button.setAttribute('aria-busy', 'true');
                 translationNote('Checking languages…');
                 try {

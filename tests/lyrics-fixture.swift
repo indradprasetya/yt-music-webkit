@@ -607,6 +607,10 @@ setbuf(stdout, nil)
         defaults.set(true, forKey: "MusicLyricsShowTranslation")
         defaults.set(["video:languageSongA": ["translate": false, "pronunciation": false]], forKey: "MusicLyricsLanguageByTrack")
     }
+    if CommandLine.arguments.contains("--translation-hidden-only") {
+        defaults.set("id", forKey: "MusicLyricsTranslationLanguage")
+        defaults.set(["video:languageSongA": ["translate": true]], forKey: "MusicLyricsLanguageByTrack")
+    }
     if CommandLine.arguments.contains("--pronunciation-scroll-only") {
         defaults.set(false, forKey: "MusicLyricsShowPronunciation")
     }
@@ -809,6 +813,38 @@ setbuf(stdout, nil)
         try await seekPause(6)
         try await expect("!document.querySelector('.lyrics-pause.is-visible')", "Do not guess LRC vocal endings")
         print("PASS: intro, known gaps, countdown, seeks, boundaries, short gaps and LRC fallback")
+        return
+    }
+    if CommandLine.arguments.contains("--translation-hidden-only") {
+        try await expect("!!document.querySelector('.lyrics-translate-button')", "Load lyric controls")
+        try await expect("getComputedStyle(document.querySelector('.lyrics-translate-button')).display === 'none'", "Hide the translation toolbar control")
+        _ = try await js("""
+            window.languageActions = [];
+            const handler = webkit.messageHandlers.musicLyricsLanguage;
+            const post = handler.postMessage.bind(handler);
+            handler.postMessage = message => { languageActions.push(message.action); return post(message); };
+            null;
+            """)
+        try await selectVersion("languageSongA")
+        try await changeTrack("Language demo")
+        try await expect("document.querySelector('.lyrics-pronunciation')?.textContent === 'ashita wa hareru' && !document.querySelector('.lyrics-pronunciation').hidden", "Keep pronunciation working for a song with saved translation enabled")
+        _ = try await js("document.querySelector('.lyrics-settings-button').click(); document.querySelector('.lyrics-translate-button').click(); null")
+        try await expect("!document.querySelector('.lyrics-settings-panel').hidden && getComputedStyle(document.querySelector('.lyrics-translation-section')).display === 'none' && document.querySelector('.lyrics-language-select').disabled", "Open timing and provider settings without translation controls or language downloads")
+        try await expect("document.querySelector('.lyrics-offset-input').getClientRects().length > 0 && document.querySelector('.lyrics-provider-select').getClientRects().length > 0", "Keep timing and provider controls available")
+        _ = try await js("document.querySelector('.lyrics-translate-button').focus(); document.querySelector('.lyrics-language-select').focus(); null")
+        try await expect("!document.activeElement.matches('.lyrics-translate-button, .lyrics-language-select')", "Hidden translation controls cannot receive keyboard focus")
+        try await selectVersion("languageSongB")
+        try await changeTrack("Fixture")
+        try await selectVersion("languageSongA")
+        try await changeTrack("Language demo")
+        try await update()
+        try await expect("document.querySelector('.lyrics-pronunciation')?.textContent === 'ashita wa hareru' && document.querySelector('.lyrics-translate-button').getAttribute('aria-pressed') === 'false' && [...document.querySelectorAll('.lyrics-translation')].every(node => node.hidden)", "Saved translation stays inactive after track changes and renderer restart")
+        try await expect("!languageActions.some(action => ['options', 'translate', 'trackPreferences'].includes(action))", "Do not load translation languages, translate, or overwrite saved song preferences")
+        let saved = defaults.dictionary(forKey: "MusicLyricsLanguageByTrack")?["video:languageSongA"] as? [String: Bool]
+        assert(saved?["translate"] == true && defaults.string(forKey: "MusicLyricsTranslationLanguage") == "id", "Retain existing translation preferences")
+        _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); null")
+        try await expect("[...document.querySelectorAll('.lyrics-pronunciation')].every(node => node.hidden)", "Pronunciation still toggles independently")
+        print("PASS: hidden translation controls, inactive saved translation, retained preferences and independent pronunciation")
         return
     }
     if CommandLine.arguments.contains("--language-ui-only") {
