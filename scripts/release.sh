@@ -129,6 +129,16 @@ if count != 1:
     sys.exit("Expected exactly one pinned Sparkle package reference.")
 project.write_text(text.replace("XCRemoteSwiftPackageReference", "XCLocalSwiftPackageReference"))
 (source / "Music.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved").unlink()
+# Keep the pinned Yams source available without a package checkout during archive.
+yams = next((p for p in (Path.home() / "Library/Developer/Xcode/DerivedData").glob("*/SourcePackages/checkouts/Yams") if (p / "Package.swift").is_file()), None)
+if yams is None:
+    sys.exit("Cached Yams package unavailable. Build Music once in Xcode first.")
+shutil.copytree(yams, work / "Yams", ignore=shutil.ignore_patterns(".git", ".DS_Store"))
+text, count = re.subn(r'isa = XCLocalSwiftPackageReference;\s*repositoryURL = "https://github.com/jpsim/Yams";\s*requirement = \{[^}]+\};',
+                      'isa = XCLocalSwiftPackageReference;\n\t\t\trelativePath = ../Yams;', project.read_text())
+if count != 1:
+    sys.exit("Expected exactly one pinned Yams package reference.")
+project.write_text(text)
 PYSOURCE
 mounted=""
 trap 'if [ -n "$mounted" ]; then hdiutil detach "$mounted" -quiet || true; fi' EXIT

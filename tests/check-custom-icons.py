@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
+frameworks = Path(os.environ.get("MUSIC_TEST_FRAMEWORKS", root / "dist/updater-build/Build/Products/Debug"))
 checks = r'''
 import AppKit
 
@@ -187,7 +188,12 @@ with tempfile.TemporaryDirectory(prefix="music-custom-icon-check-") as directory
     script.write_text(checks)
     binary = app / "MacOS/IconCheck"
     subprocess.run(["xcrun", "swiftc", "-swift-version", "5", str(root / "Music/MusicAppIcons.swift"),
+                    "-I", str(frameworks), "-I", str(frameworks.parents[2] / "SourcePackages/checkouts/Yams/Sources/CYaml/include"),
+                    str(frameworks / "Yams.o"), str(frameworks / "CYaml.o"),
                     str(root / "Music/MusicSettings.swift"), str(root / "Music/MusicExtensions.swift"), str(root / "Music/MusicScripts.swift"),
+                    str(root / "Music/MusicLyrics.swift"), str(root / "Music/MusicLyricsProvider.swift"),
+                    str(root / "Music/MusicTTML.swift"),
+                    str(root / "Music/MusicLyricsTranslation.swift"),
                     str(script), "-o", str(binary)], check=True, env=env)
     subprocess.run(["codesign", "--sign", "-", str(app.parent)], check=True, capture_output=True)
     command = [str(binary), str(work), str(root / "Music/icon.icns"), str(root / "Music/icon-dark.icns"),
