@@ -38,14 +38,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif name == "channels4_profile.jpg":
             body = (pages / name).read_bytes()
             mime = "image/jpeg"
-        elif name in {"music-light.png", "music-dark.png"}:
+        elif name in {"music-light.png", "music-dark.png", "lyrics-130.png"}:
             body = (pages / name).read_bytes()
             mime = "image/png"
+        elif name == "lyrics-130.gif":
+            body = (pages / name).read_bytes()
+            mime = "image/gif"
         elif name == "message.css":
             body = (pages / name).read_bytes()
             mime = "text/css"
         elif scenario == "announcement":
-            body = (pages / "update-available-120.html").read_bytes()
+            body = (pages / "update-available-130.html").read_bytes()
         else:
             body = (pages / ("updated.html" if scenario == "updated" else "welcome.html")).read_bytes()
             if scenario == "missing":
@@ -84,7 +87,7 @@ window.titlebarAppearsTransparent = true
 window.center()
 let original = NSView(frame: window.contentView!.frame)
 window.contentView = original
-window.makeKeyAndOrderFront(nil)
+window.orderBack(nil)
 let domain = "MusicStartupWebViewCheck.\(UUID().uuidString)"
 let defaults = UserDefaults(suiteName: domain)!
 var updateCount = 0
@@ -167,12 +170,12 @@ Task { @MainActor in
     await waitFor { window.contentView === original }
     start("announcement")
     await waitFor { window.contentView !== original }
-    await expectJS("document.querySelector('h1').innerText === 'New update available'")
+    await expectJS("document.querySelector('h1').innerText === 'Lyrics that move with your music.'")
     await expectJS("document.querySelectorAll('link[rel=stylesheet]').length === 0")
     await expectJS("getComputedStyle(document.documentElement).backgroundColor === 'rgb(3, 3, 3)'")
-    await expectJS("getComputedStyle(document.querySelector('.features li')).display === 'grid'")
+    await expectJS("['grid', 'flex'].includes(getComputedStyle(document.querySelector('main')).display)")
     await expectJS("Array.from(document.images).every(image => image.naturalWidth > 0)")
-    assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "music-120-announcement"))
+    assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "music-130-lyrics"))
     if let preview {
         for (name, width, height) in [("announcement-desktop", 1200, 800), ("announcement-small-window", 640, 580), ("announcement-narrow", 390, 844)] {
             window.setContentSize(NSSize(width: width, height: height))
@@ -190,7 +193,7 @@ Task { @MainActor in
     await waitFor { window.contentView === original }
     start("announcement")
     try! await Task.sleep(nanoseconds: 500_000_000)
-    assert(window.contentView === original, "The 1.2.0 announcement must only appear once")
+    assert(window.contentView === original, "The 1.3.0 announcement must only appear once")
     start("success")
     await waitFor { window.contentView !== original }
     let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -211,7 +214,7 @@ Task { @MainActor in
     try! await Task.sleep(nanoseconds: 500_000_000)
     assert(window.contentView === original)
     assert(!defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "once-warning"))
-    window.makeKeyAndOrderFront(nil)
+    window.orderBack(nil)
     start("once")
     await waitFor { window.contentView !== original }
     assert(defaults.bool(forKey: MusicStartupRules.shownKeyPrefix + "once-warning"),
