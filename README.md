@@ -112,10 +112,11 @@ The full notices for code actually included in Music remain in `THIRD_PARTY_NOTI
 - **Follow the lyrics:** The active line is larger and stays centered. Manual scrolling pauses automatic scrolling. Reduced Motion disables transitions and smooth scrolling.
 - **Jump to a line:** Click a timed lyric, or focus it and press Return/Space. Seeking includes your saved timing adjustment.
 - **Adjust timing:** Open the gear. The **− / +** buttons shift lyrics by **0.01 seconds**. Click the number to enter seconds manually; press Enter or leave the field to save. Escape cancels an edit. Sync and manual entry preserve millisecond precision.
+- **Source defaults:** lrcmux (KuGou) starts **0.20 seconds earlier**, whether chosen by Automatic or manually. Other sources start at zero. A saved manual offset replaces the default; it is not added to it. Entering zero overrides KuGou's default for that song and playback mode.
 - **Check the adjustment:** The footer shows nonzero changes after the timing type, such as `Word-by-word · 0.25 s later` or `Line-by-line · 0.50 s earlier`.
 - **Saved automatically:** Timing is stored on this Mac for each song, playback mode, and lyric source. The panel names the mode and source being adjusted. Song and Video have separate settings even for the same YouTube URL; switching back restores the saved adjustment.
 - **Separate sources:** Adjusting Better Lyrics does not affect NetEase. Different lrcmux sources, such as KuGou and Deezer, also keep separate timing.
-- **Reset:** Clears only the current song/mode/source adjustment and keeps your provider choice. Setting the value to zero has the same effect.
+- **Reset:** Clears only the current song/mode/source adjustment, restores that source's default timing, and keeps your provider choice.
 - **Close settings:** Click outside the panel or press Escape when you are not editing the number.
 
 Saved timing uses the YouTube video ID when available, otherwise the title, artist, and duration. Album metadata affects cached lyrics, not saved timing. An adjustment shifts timestamps; it cannot fix a different arrangement, tempo, or audio speed.
@@ -123,7 +124,7 @@ Saved timing uses the YouTube video ID when available, otherwise the title, arti
 Older settings are preserved:
 
 - Adjustments saved without a source are not applied automatically. Adjust timing once for each song/source you use.
-- Adjustments saved with a source but no mode are used only when the mode is unknown. Song and Video start at zero unless they have their own saved adjustment.
+- Adjustments saved with a source but no mode are used only when the mode is unknown. Song and Video use their source defaults unless they have their own saved adjustment.
 
 ## Privacy
 
@@ -147,7 +148,7 @@ When Synced Lyrics is enabled, fresh lookups send the current song's metadata to
 
 All five receive standard connection information, including the user's IP address and Music's identifying `User-Agent`. Better Lyrics and lrcmux are aggregators and may forward search metadata to their upstream providers under their own policies. Their servers control any service-side storage, caching and logging; Music does not control those retention policies. No metadata is sent to the Music developer or syncedlyrics maintainers by this implementation.
 
-Provider requests use a separate temporary network session without YouTube/Google cookies or account credentials. Responses, anonymous provider cookies, and up to 30 selected lookup results stay in memory; fetched lyrics are not saved to disk. There is no catalog mirroring, playlist-wide prefetch, lyric upload or telemetry. Nonzero timing offsets, track identifiers, identifiable Song/Video modes and the selected lyric source names are saved in local app preferences. These saved adjustments, playback modes, YouTube video IDs and Google account credentials are not sent to lyric providers.
+Provider requests use a separate temporary network session without YouTube/Google cookies or account credentials. Responses, anonymous provider cookies, and up to 30 selected lookup results stay in memory; fetched lyrics are not saved to disk. There is no catalog mirroring, playlist-wide prefetch, lyric upload or telemetry. Timing overrides (including zero when it differs from the source default), track identifiers, identifiable Song/Video modes and the selected lyric source names are saved in local app preferences. These saved adjustments, playback modes, YouTube video IDs and Google account credentials are not sent to lyric providers.
 
 
 

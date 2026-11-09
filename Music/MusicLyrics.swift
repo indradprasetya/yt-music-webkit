@@ -7,6 +7,8 @@ import AppKit
 final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMessageHandler {
     private let defaults: UserDefaults
     private let enabledKey = "MusicCustomLyricsEnabled"
+    // KuGou cues tend to lag vocals; saved song offsets replace this starting adjustment.
+    private static let kugouDefaultOffset = -200
     // Legacy offsets have no source identity; keep them untouched rather than guessing a provider.
     private let offsetsKey = "MusicLyricsOffsetsByTrackAndSource"
     private let providersKey = "MusicLyricsProvidersByTrack"
@@ -145,9 +147,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
         return milliseconds
     }
 
+    private func defaultOffset(for key: String) -> Int {
+        key.hasSuffix("|source:lrcmux (KuGou)") ? Self.kugouDefaultOffset : 0
+    }
+
     var trackOffsets: [String: Int] {
         (defaults.dictionary(forKey: offsetsKey) ?? [:]).reduce(into: [:]) { result, entry in
-            guard validOffsetKey(entry.key), let value = validOffset(entry.value), value != 0 else { return }
+            guard validOffsetKey(entry.key), let value = validOffset(entry.value), value != defaultOffset(for: entry.key) else { return }
             result[entry.key] = value
         }
     }
@@ -184,7 +190,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
               let body = message.body as? [String: Any], let key = body["trackKey"] as? String,
               validOffsetKey(key), let value = validOffset(body["milliseconds"]) else { return }
         var offsets = trackOffsets
-        if value == 0 { offsets.removeValue(forKey: key) } else { offsets[key] = value }
+        if value == defaultOffset(for: key) { offsets.removeValue(forKey: key) } else { offsets[key] = value }
         if offsets.isEmpty { defaults.removeObject(forKey: offsetsKey) }
         else { defaults.set(offsets, forKey: offsetsKey) }
         // Future documents must receive the latest offsets, including deletions.
@@ -413,7 +419,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-pause { display: none; }
                 #music-custom-lyrics .lyrics-pause.is-visible {
                     display: flex; flex-shrink: 0; align-items: center; gap: 10px;
-                    height: 24px; margin: 24px 0 0;
+                    height: 24px; margin: 24px 0 0; padding-inline-start: 2px;
                 }
                 #music-custom-lyrics .lyrics-pause span {
                     width: 10px; height: 10px; border-radius: 50%; background: #f5f5f5;
@@ -606,6 +612,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
             let languagesReady = null;
             let currentResult = null;
             let offsetTrackKey = '';
+            let defaultOffset = 0;
             let offset = 0;
             let retryAfter = 0;
             let userScrollUntil = 0;
@@ -709,7 +716,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 if (!Number.isFinite(value) || !offsetTrackKey || !track
                     || !offsetTrackKey.startsWith(`${offsetIdentity(track)}|source:`)) return false;
                 offset = Math.round(Math.max(-3_600_000, Math.min(3_600_000, value)));
-                if (offset === 0) delete savedOffsets[offsetTrackKey];
+                if (offset === defaultOffset) delete savedOffsets[offsetTrackKey];
                 else savedOffsets[offsetTrackKey] = offset;
                 updateTimingDisplay();
                 overlay.querySelector('.lyrics-feedback').textContent = `Timing ${formatOffset(offset)}.`;
@@ -850,7 +857,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 element.querySelectorAll('[data-offset]').forEach(button => button.addEventListener('click', () => {
                     setOffset(offset + Number(button.dataset.offset));
                 }));
-                element.querySelector('[data-reset]').addEventListener('click', () => setOffset(0));
+                element.querySelector('[data-reset]').addEventListener('click', () => setOffset(defaultOffset));
                 element.querySelector('.lyrics-provider-select').addEventListener('change', event => {
                     const track = trackInfo();
                     if (!track || !currentResult || !offsetTrackKey.startsWith(`${offsetIdentity(track)}|source:`)) return;
@@ -1526,7 +1533,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     indicator.querySelectorAll('span').forEach((dot, index) => {
                         const fill = Math.max(0, Math.min(1, (time - (end - 3000 + index * 1000)) / 1000));
                         dot.style.opacity = String(.3 + .7 * fill);
-                        const pulse = reducedMotion.matches ? 1 : 1 + .06 * Math.sin(time / 2000 * Math.PI * 2 - index * .5);
+                        const pulse = reducedMotion.matches ? 1 : 1 + .2 * Math.sin(time / 2000 * Math.PI * 2 - index * .5);
                         dot.style.transform = `scale(${pulse})`;
                     });
                 }
@@ -1709,7 +1716,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     : result.alternatives.length > 1 ? 'Best available match.'
                     : 'No other providers matched.';
                 offsetTrackKey = `${identity}|source:${selected.source}`;
-                offset = savedOffsets[offsetTrackKey] ?? 0;
+                defaultOffset = selected.source === 'lrcmux (KuGou)' ? \(Self.kugouDefaultOffset) : 0;
+                offset = savedOffsets[offsetTrackKey] ?? defaultOffset;
                 overlay.querySelector('.lyrics-offset-source').textContent = selected.source;
                 overlay.querySelector('.lyrics-offset-scope').textContent = track.playbackMode
                     ? `Saved for ${track.playbackMode === 'video' ? 'Video' : 'Song'} mode` : 'Saved for this song';
