@@ -390,11 +390,26 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-scroll {
                     flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
                     overscroll-behavior: contain; scrollbar-width: auto; scroll-behavior: auto; overflow-anchor: none;
-                    mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent), linear-gradient(#000, #000);
+                    mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 86%, transparent), linear-gradient(#000, #000);
                     mask-size: calc(100% - 14px) 100%, 14px 100%;
                     mask-position: left top, right top; mask-repeat: no-repeat;
                 }
+                #music-custom-lyrics .lyrics-scroll::before,
+                #music-custom-lyrics .lyrics-scroll::after {
+                    position: sticky; z-index: 1; display: block; height: 64px; margin-inline-end: 14px;
+                    content: ''; pointer-events: none; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+                }
+                #music-custom-lyrics .lyrics-scroll::before {
+                    top: 0; margin-bottom: -64px; background: linear-gradient(to bottom, rgba(0,0,0,.28), transparent);
+                    -webkit-mask-image: linear-gradient(to bottom, #000, transparent); mask-image: linear-gradient(to bottom, #000, transparent);
+                }
+                #music-custom-lyrics .lyrics-scroll::after {
+                    bottom: 0; margin-top: -64px; background: linear-gradient(to top, rgba(0,0,0,.28), transparent);
+                    -webkit-mask-image: linear-gradient(to top, #000, transparent); mask-image: linear-gradient(to top, #000, transparent);
+                }
                 #music-custom-lyrics .lyrics-scroll:has(.lyrics-lines.is-plain) { mask-image: none; }
+                #music-custom-lyrics .lyrics-scroll:has(.lyrics-lines.is-plain)::before,
+                #music-custom-lyrics .lyrics-scroll:has(.lyrics-lines.is-plain)::after { display: none; }
                 #music-custom-lyrics .lyrics-scroll::-webkit-scrollbar { width: 14px; background: transparent; }
                 #music-custom-lyrics .lyrics-scroll::-webkit-scrollbar-track { background: transparent; }
                 #music-custom-lyrics .lyrics-scroll::-webkit-scrollbar-thumb {
@@ -407,15 +422,22 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     display: flex; flex-direction: column; padding: 16px 0 24px;
                 }
                 #music-custom-lyrics .lyrics-line {
-                    margin: 0; color: rgba(245,245,245,.24); font-size: clamp(20px, 1.7vw, 26px);
+                    margin: 0; color: rgba(255,255,255,.24); font-size: clamp(20px, 1.7vw, 26px);
                     font-weight: 700; line-height: 1.28; letter-spacing: -.018em;
-                    transition: color .3s ease;
+                    transition: color .42s ease, opacity .45s cubic-bezier(.33,0,.67,1);
                 }
                 /* WebKit grid rows can retain stale lyric heights after resizing. */
                 #music-custom-lyrics .lyrics-line:has(> .lyrics-align) {
                     position: relative; padding-inline-end: 48px;
                 }
                 #music-custom-lyrics .lyrics-line + .lyrics-line { margin-top: 24px; }
+                #music-custom-lyrics .lyrics-lines.is-following .lyrics-line.is-past {
+                    opacity: 0; pointer-events: none;
+                }
+                #music-custom-lyrics .lyrics-lines.is-following .lyrics-line.is-fading { color: #fff; }
+                #music-custom-lyrics .lyrics-lines:not(.is-following) .lyrics-line.is-past {
+                    transition: opacity .45s cubic-bezier(.33,0,.67,1);
+                }
                 #music-custom-lyrics .lyrics-pause { display: none; }
                 #music-custom-lyrics .lyrics-pause.is-visible {
                     display: flex; flex-shrink: 0; align-items: center; gap: 10px;
@@ -446,21 +468,24 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 #music-custom-lyrics .lyrics-lines:not(.is-plain) .lyrics-line.is-current .lyrics-seek {
                     transform: translateY(-3px) scale(1);
                 }
+                #music-custom-lyrics .lyrics-lines.is-following .lyrics-line.is-fading .lyrics-seek {
+                    transform: translateY(-3px) scale(1);
+                }
                 #music-custom-lyrics .lyrics-line .lyrics-word {
                     display: inline; white-space: pre;
                 }
                 #music-custom-lyrics .lyrics-line.is-current .lyrics-word {
-                    color: rgba(255,255,255,.32);
+                    color: rgba(255,255,255,.24);
                 }
                 #music-custom-lyrics .lyrics-letter { display: inline; }
-                #music-custom-lyrics .lyrics-line.is-current .lyrics-word.is-sung .lyrics-letter,
-                #music-custom-lyrics .lyrics-line.is-current .lyrics-word.is-current .lyrics-letter {
+                #music-custom-lyrics .lyrics-line.is-current .lyrics-word .lyrics-letter,
+                #music-custom-lyrics .lyrics-lines.is-following .lyrics-line.is-fading .lyrics-word .lyrics-letter {
                     color: transparent; -webkit-text-fill-color: transparent;
                     background-image: linear-gradient(to right, #fff 0, #fff var(--word-progress, 0%),
-                        rgba(255,255,255,.34) var(--word-progress, 0%), rgba(255,255,255,.34) 100%);
+                        rgba(255,255,255,.24) var(--word-progress, 0%), rgba(255,255,255,.24) 100%);
                     background-size: 100% 100%; background-repeat: no-repeat;
                     background-clip: text; -webkit-background-clip: text;
-                    text-shadow: 0 0 6px rgba(255,255,255,.13);
+                    text-shadow: none;
                 }
                 #music-custom-lyrics .lyrics-lines .lyrics-line.is-credit {
                     font-size: 14px; font-weight: 400; line-height: 1.5; letter-spacing: normal;
@@ -661,6 +686,11 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 syncPointerX = event.clientX;
                 syncPointerY = event.clientY;
                 clearTimeout(syncResumeTimer);
+                overlay?.querySelector('.lyrics-lines')?.classList.remove('is-following');
+                syncResumeTimer = setTimeout(() => {
+                    syncScrollPaused = false;
+                    updateActiveLine(true);
+                }, 3000);
                 cancelScroll();
                 syncScrollPaused = true;
                 updateSyncControl();
@@ -882,6 +912,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     scroll.addEventListener(event, () => {
                         cancelScroll();
                         userScrollUntil = Date.now() + 2500;
+                        scroll.querySelector('.lyrics-lines')?.classList.remove('is-following');
                     }, {passive: true});
                 }
                 resizeObserver.observe(scroll);
@@ -1456,7 +1487,7 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 const started = performance.now();
                 function step(now) {
                     const progress = reducedMotion.matches ? 1 : Math.min(1, Math.max(0, (now - started) / duration));
-                    scroll.scrollTop = start + (target - start) * (1 - (1 - progress) ** 3);
+                    scroll.scrollTop = start + (target - start) * progress * progress * (3 - 2 * progress);
                     scrollFrame = progress < 1 ? requestAnimationFrame(step) : 0;
                 }
                 scrollFrame = requestAnimationFrame(step);
@@ -1554,6 +1585,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 const scroll = overlay.querySelector('.lyrics-scroll');
                 const holdSync = syncScrollPaused || document.activeElement?.matches('.lyrics-align:focus-visible, .lyrics-seek:focus-visible');
+                const list = overlay.querySelector('.lyrics-lines');
+                const following = !holdSync && Date.now() > userScrollUntil;
+                const followChanged = list.classList.contains('is-following') !== following;
+                list.classList.toggle('is-following', following);
                 const previousPause = overlay.querySelector('.lyrics-pause[data-active="true"]');
                 const layoutChanged = [...overlay.querySelectorAll('.lyrics-pause')].some(indicator => {
                     const visible = time >= Number(indicator.dataset.start) && time < Number(indicator.dataset.end) + 650;
@@ -1568,14 +1603,16 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                 }
                 const pause = updatePause(time, holdSync);
                 const pauseChanged = pause !== previousPause;
-                if (next === activeIndex && !pauseChanged && !preservedPauseLayout && !forceScroll && !refreshLayout) {
+                if (next === activeIndex && !pauseChanged && !preservedPauseLayout && !forceScroll && !refreshLayout && !followChanged) {
                     updateActiveWords(time);
                     return;
                 }
                 activeIndex = next;
                 const rows = overlay.querySelectorAll('.lyrics-line');
-                const list = overlay.querySelector('.lyrics-lines');
                 rows.forEach((row, index) => {
+                    const isPast = index < activeIndex || (pause && index === activeIndex);
+                    row.classList.toggle('is-fading', !!(isPast && following && !followChanged && row.classList.contains('is-current')));
+                    row.classList.toggle('is-past', isPast);
                     const isCurrent = index === activeIndex && !pause;
                     row.classList.toggle('is-current', isCurrent);
                     if (isCurrent) {
@@ -1595,10 +1632,13 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     }
                 });
                 updateActiveWords(time);
+                const first = rows[0].querySelector('.lyrics-seek') || rows[0];
+                const second = rows[1]?.querySelector('.lyrics-seek') || rows[1] || first;
+                const topAnchor = 16 + first.offsetHeight + 24 + second.offsetHeight + (rows[1] ? 24 : 0);
                 if (!preservedPauseLayout && !holdSync && (refreshLayout || forceScroll || Date.now() > userScrollUntil)) {
-                    list.style.paddingBlockStart = `${Math.max(0, (scroll.clientHeight - Math.min((rows[0].querySelector('.lyrics-seek') || rows[0]).offsetHeight, pause?.offsetHeight ?? Infinity)) / 2)}px`;
+                    list.style.paddingBlockStart = `${topAnchor}px`;
                     const last = rows[rows.length - 1];
-                    list.style.paddingBlockEnd = `${Math.max(0, (scroll.clientHeight - (last.querySelector('.lyrics-seek') || last).offsetHeight) / 2)}px`;
+                    list.style.paddingBlockEnd = `${Math.max(0, scroll.clientHeight - (last.querySelector('.lyrics-seek') || last).offsetHeight - topAnchor)}px`;
                 }
                 if (activeIndex < 0 && !pause) {
                     cancelScroll();
@@ -1610,8 +1650,8 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     const target = row.querySelector('.lyrics-seek') || row;
                     const bounds = target.getBoundingClientRect();
                     const verticalTransform = new DOMMatrix(getComputedStyle(target).transform).m42;
-                    scrollToPosition(scroll, scroll.scrollTop + bounds.top + bounds.height / 2 - verticalTransform
-                        - scroll.getBoundingClientRect().top - scroll.clientHeight / 2, immediate, pauseChanged ? 700 : 420);
+                    scrollToPosition(scroll, scroll.scrollTop + bounds.top - verticalTransform
+                        - scroll.getBoundingClientRect().top - topAnchor, immediate, pauseChanged ? 700 : 650);
                 }
             }
 
