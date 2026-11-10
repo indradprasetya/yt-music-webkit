@@ -1710,6 +1710,37 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                     })};
             }
 
+            function automaticLyrics(result, netEaseLines) {
+                if (result.source !== 'NetEase' || !result.lines.some(line => !line.credit && line.words?.length)) return result;
+                function profile(lines) {
+                    const texts = lines.filter(line => !line.credit && Number.isFinite(line.time)).map(line => line.text);
+                    const letters = texts.join('').match(/\\p{L}/gu) || [];
+                    const count = script => letters.filter(letter => script.test(letter)).length;
+                    const normalized = new Set(texts.map(text => text.normalize('NFKC').toLowerCase()
+                        .replace(/[^\\p{L}\\p{M}]/gu, '')).filter(Boolean));
+                    return {normalized, enough: letters.length >= 60 && normalized.size >= 3,
+                        latin: count(/\\p{Script=Latin}/u) / letters.length >= .95,
+                        han: count(/\\p{Script=Han}/u) / letters.length >= .9
+                            && !count(/[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}]/u)};
+                }
+                const original = profile(result.lines);
+                if (!original.enough || !original.han) return result;
+                const candidates = result.alternatives.flatMap(item => item.source === 'NetEase'
+                    ? [item, {source: item.source, lines: netEaseLines}] : [item])
+                    .map(item => ({item, ...profile(item.lines)}))
+                    .filter(candidate => candidate.enough && candidate.latin);
+                // Require matching vocals from different providers; Latin alone may be a romanization.
+                // shortcut: compare whole lines; use token alignment if differing line breaks need support.
+                const supported = candidates.filter(candidate => candidates.some(other => {
+                    if (candidate.item.source === other.item.source) return false;
+                    const common = [...candidate.normalized].filter(text => other.normalized.has(text)).length;
+                    return common >= 3 && common / candidate.normalized.size >= .6
+                        && common / other.normalized.size >= .6;
+                }));
+                return supported.find(candidate => candidate.item.lines.some(line => !line.credit && line.words?.length))?.item
+                    || supported[0]?.item || result;
+            }
+
             async function fetchLyrics(track, key) {
                 if (cache.has(key)) return cache.get(key);
                 const reply = await window.webkit.messageHandlers.musicLyricsLookup.postMessage(track);
@@ -1726,6 +1757,10 @@ final class MusicLyrics: NSObject, WKScriptMessageHandlerWithReply, WKScriptMess
                             || result.alternatives[0];
                         if (fallback) Object.assign(result, fallback);
                     }
+                    const netEase = (reply.alternatives || [reply.record]).find(record => record.source === 'NetEase');
+                    const netEaseLines = netEase ? readLyrics({...netEase, yrcLyrics: '', lyricsFileLines: []},
+                        netEase.synchronized, track.artists).lines : [];
+                    Object.assign(result, automaticLyrics(result, netEaseLines));
                 }
                 cache.set(key, result);
                 if (cache.size > 30) cache.delete(cache.keys().next().value);
