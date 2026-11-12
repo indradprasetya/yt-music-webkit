@@ -18,13 +18,13 @@ Designed with privacy and security in mind, Music has no developer-operated back
 
 ## Download
 
-Music 1.3.0 requires macOS 15.4 or later. This release adds synced lyrics that follow playback, with line seeking and per-song timing adjustments.
+Music 1.3.1 requires macOS 15.4 or later. This release improves synced lyrics with smoother scrolling and better matching when providers return lyrics in different scripts.
 
-[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.3.0/Music-1.3.0-Apple-Silicon.dmg)<br>
+[![Download latest version for Apple Silicon](https://img.shields.io/badge/Download_latest-Apple_Silicon-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.3.1/Music-1.3.1-Apple-Silicon.dmg)<br>
 <span style="font-size: 0.8em;">For Macs with Apple Silicon chips: M1, M2, M3, and later.</span>
 
 
-[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.3.0/Music-1.3.0-Intel.dmg)<br>
+[![Download latest version for Intel](https://img.shields.io/badge/Download_latest-Intel-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/indradprasetya/yt-music-webkit/releases/download/v1.3.1/Music-1.3.1-Intel.dmg)<br>
 <span style="font-size: 0.8em;">For Macs with an Intel processor.</span>
 
 [See GitHub Releases](https://github.com/indradprasetya/yt-music-webkit/releases)
@@ -59,13 +59,13 @@ Scripts must be standalone UTF-8 `.js` files up to 1 MB. They run after the docu
 
 - Music checks NetEase, LRCLIB, AMLL, Better Lyrics, and lrcmux on each fresh lookup, even after finding word timing. Providers in a requested cooldown are temporarily skipped.
 - Cached results are reused. **Try Again** starts a fresh lookup.
-- **Automatic** prefers valid word/syllable timing over line timing. When timing is equal, the order is **Better Lyrics → NetEase → LRCLIB → AMLL → lrcmux**.
+- **Automatic** prefers valid word/syllable timing over line timing. When timing is equal, the order is **Better Lyrics → NetEase → LRCLIB → AMLL → lrcmux**. If NetEase returns mostly Han characters, Music can choose Latin-script lyrics when two providers return matching lines.
 - The Lyrics gear lists matching timed providers. You can switch between them immediately without another request.
 - Manual choices are saved on this Mac for each song and playback mode. Choose **Automatic** to clear a saved choice.
 - If your saved provider is unavailable, Music temporarily uses the best available result and explains the fallback in the gear panel.
 - If no readable timed lyrics are found, the original YouTube Music panel stays visible. This includes untimed results and NetEase records containing only credits.
 
-Hover a lyric line to reveal its dim sync button in the fixed column on the right; hovering the button makes it brighter. Sync buttons stay hidden in the faded top and bottom edges. Automatic scrolling stays paused while the pointer remains anywhere over the lyrics, even when it is still, and resumes after the pointer leaves and the button fades out; vocal highlighting continues. Keyboard focus on a lyric or sync button also reveals that line's control and holds scrolling. Click a sync button when its line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
+Hover a lyric line to reveal its dim sync button in the fixed column on the right; hovering the button makes it brighter. Sync buttons stay hidden in the faded top and bottom edges. Moving the pointer over the lyrics pauses automatic scrolling while vocal highlighting continues. Scrolling resumes after three seconds without pointer movement or shortly after the pointer leaves. Keyboard focus on a lyric or sync button also reveals that line's control and holds scrolling. Click a sync button when its line starts being sung to align all lyric timing with the current playback position. This saves a single offset for that song, playback mode and lyric source. Timing from other providers is kept separately. Reset clears the current timing adjustment without changing the provider choice. A single offset cannot repair incorrect timing between individual lines.
 
 | Source | API used by Music | Data used for matching and display |
 | --- | --- | --- |
@@ -109,7 +109,7 @@ The full notices for code actually included in Music remain in `THIRD_PARTY_NOTI
 ### Timing controls
 
 - **Enable or disable:** Use **Settings → Lyrics**. Synced Lyrics starts enabled, and Music remembers your choice.
-- **Follow the lyrics:** The active line is larger and stays centered. Manual scrolling pauses automatic scrolling. Reduced Motion disables transitions and smooth scrolling.
+- **Follow the lyrics:** The active line is larger, and previous lines fade as the lyrics follow playback. Manual scrolling pauses automatic scrolling. Reduced Motion disables transitions and smooth scrolling.
 - **Jump to a line:** Click a timed lyric, or focus it and press Return/Space. Seeking includes your saved timing adjustment.
 - **Adjust timing:** Open the gear. The **− / +** buttons shift lyrics by **0.01 seconds**. Click the number to enter seconds manually; press Enter or leave the field to save. Escape cancels an edit. Sync and manual entry preserve millisecond precision.
 - **Source defaults:** lrcmux (KuGou) starts **0.20 seconds earlier**, whether chosen by Automatic or manually. Other sources start at zero. A saved manual offset replaces the default; it is not added to it. Entering zero overrides KuGou's default for that song and playback mode.

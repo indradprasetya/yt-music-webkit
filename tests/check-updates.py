@@ -113,7 +113,7 @@ app.run()
 ''')
     subprocess.run(["xcrun", "swiftc", "-F", str(frameworks), "-framework", "Sparkle",
                     "-Xlinker", "-rpath", "-Xlinker", str(frameworks),
-                    str(root / "Music/MusicUpdates.swift"), str(root / "Music/MusicReleaseNotes.swift"), str(work / "main.swift"),
+                    str(root / "Music/MusicUpdates.swift"), str(root / "Music/MusicReleaseNotes.swift"), str(root / "Music/MusicMenuSymbol.swift"), str(work / "main.swift"),
                     "-o", str(app / "MacOS/UpdateCheck")], env=env, check=True)
     feed = '''<?xml version="1.0"?><rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><title>Music</title><item><title>Music 1.1.0</title><sparkle:version>{build}</sparkle:version><sparkle:shortVersionString>1.1.0</sparkle:shortVersionString><enclosure url="https://example.com/Music.dmg" length="100" type="application/octet-stream"/></item></channel></rss>'''
     try:

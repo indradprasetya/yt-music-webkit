@@ -1,4 +1,4 @@
-01d0b3e0baafa3678a807ceed08c480499f15d3ab4df579199c9e52acdee29b4  ./Music-1.3.0-Apple-Silicon.dmg
-dcd342f7c3f30f73383e4a4d28f11a2d13bbec29f86fec256277a058feff300a  ./Music-1.3.0-Intel.dmg
-1b939908d862cb97cf1c765326fa96cbb23f254c764228250aeccefae2f80585  ./appcast-arm64.xml
-1ab1ea67491b881b32e5bae0283b969312ec1faa84ea7aefcc32b42d4395740e  ./appcast-x86_64.xml
+65f78a9e313c05c78aecb405ed8d3c3058d0f76053c1fead1903f37478e514f5  ./Music-1.3.1-Apple-Silicon.dmg
+ad430cc09aadd58cc4bc0e2cadcc53f6d3da3d7086ed378d2aed1cf930ae647a  ./Music-1.3.1-Intel.dmg
+8f2aaa3806ab8382b98ab583bb06715f40c9bf036b248f1b9b1f83572e713d6e  ./appcast-arm64.xml
+8ac769bd42911de0acec69f56da96ac755c2c9318eabdaa16bde0b6794093c99  ./appcast-x86_64.xml

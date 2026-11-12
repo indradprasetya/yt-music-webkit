@@ -327,7 +327,7 @@ setbuf(stdout, nil)
         };
         null;
         """)
-    try await expect("lineIsCentered()", "Center the original lyric before toggling")
+    try await expect("lineIsAligned()", "Align the original lyric before toggling")
     _ = try await js("observeLyricPosition(document.querySelector('.lyrics-line.is-current .lyrics-seek')); document.querySelector('.lyrics-pronunciation-button').click(); null")
     try await expect("!!window.pendingPronunciation", "Hold the generated pronunciation to exercise delayed layout")
     _ = try await js("observeLyricPosition(readingAnchor); pendingPronunciation({lines:pronunciationEntries}); queueMicrotask(() => window.pronunciationFadesIn = document.querySelector('.lyrics-pronunciation').getAnimations().some(animation => animation.effect.getTiming().duration === 180)); null")
@@ -344,7 +344,7 @@ setbuf(stdout, nil)
 
     for time in [2, 112] {
         _ = try await js("fixtureTime = \(time); document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
-        try await expect("lineIsCentered()", "Center boundary lyric before changing its height")
+        try await expect("lineIsAligned()", "Align boundary lyric before changing its height")
         _ = try await js("observeLyricPosition(document.querySelector('.lyrics-line.is-current .lyrics-seek')); document.querySelector('.lyrics-pronunciation-button').click(); null")
         try await Task.sleep(for: .milliseconds(720))
         try await expect("lyricDrift < 2 && !document.querySelector('.lyrics-pronunciation').hidden", "Cached pronunciation must preserve first and last lyric positions")
@@ -374,7 +374,7 @@ setbuf(stdout, nil)
     _ = try await js("document.querySelector('.lyrics-pronunciation-button').click(); window.shownImmediately = [...document.querySelectorAll('.lyrics-pronunciation')].every(node => !node.hidden && node.getAnimations().length === 0); null")
     try await expect("shownImmediately", "Reduced Motion must show pronunciation immediately without animations")
     _ = try await js("fixtureReduceMotion = false; document.querySelectorAll('.lyrics-seek')[8].click(); null")
-    try await expect("Math.abs(document.querySelector('.lyrics-line.is-current .lyrics-seek').getBoundingClientRect().top + document.querySelector('.lyrics-line.is-current .lyrics-seek').getBoundingClientRect().height / 2 - document.querySelector('.lyrics-scroll').getBoundingClientRect().top - document.querySelector('.lyrics-scroll').clientHeight / 2) < 4", "Seeking must center the original lyric when pronunciation is visible")
+    try await expect("lineIsAligned()", "Seeking must align the original lyric when pronunciation is visible")
     try await snapshot("lyrics-pronunciation-seek")
     _ = try await js("""
         const bottomScroll = document.querySelector('.lyrics-scroll');
@@ -659,13 +659,13 @@ setbuf(stdout, nil)
         const platformMatchMedia = window.matchMedia.bind(window);
         window.matchMedia = query => query === '(prefers-reduced-motion: reduce)'
             ? {get matches() { return fixtureReduceMotion; }} : platformMatchMedia(query);
-        window.lineIsCentered = () => {
+        window.lineIsAligned = () => {
             const row = document.querySelector('.lyrics-line.is-current');
             const scroll = document.querySelector('.lyrics-scroll');
             if (!row || !scroll) return false;
             const line = row.getBoundingClientRect();
             const viewport = scroll.getBoundingClientRect();
-            return Math.abs(line.top + line.height / 2 - viewport.top - scroll.clientHeight / 2) < 4
+            return Math.abs(line.top - viewport.top - parseFloat(getComputedStyle(document.querySelector('.lyrics-lines')).paddingBlockStart)) < 4
                 && document.querySelector('#tab-renderer').scrollTop === 0;
         };
         window.fetch = () => { throw new Error('Lyrics must use native networking'); };
@@ -758,7 +758,7 @@ setbuf(stdout, nil)
         _ = try await js("document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; document.querySelector('#tab-renderer').style.width = '280px'; null")
         try await seekPause(5)
         try await expect("document.querySelectorAll('.lyrics-pause.is-visible').length === 1", "Show intro pause")
-        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center intro even when the first lyric wraps tall")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top - view.top - parseFloat(getComputedStyle(document.querySelector('.lyrics-lines')).paddingBlockStart)) < 4; })()", "Align intro even when the first lyric wraps tall")
         let automaticStable = try await web.callAsyncJavaScript("""
             const lyric = document.querySelector('.lyrics-seek');
             const top = lyric.getBoundingClientRect().top;
@@ -776,7 +776,7 @@ setbuf(stdout, nil)
         try await expect("document.querySelector('.lyrics-align svg').getAttribute('viewBox') === '0 0 25 25' && document.querySelector('.lyrics-align svg path').getAttribute('stroke') === 'currentColor'", "Use supplied sync SVG with theme color")
         try await seekPause(23.5)
         try await expect("document.querySelector('.lyrics-pause.is-visible span').style.opacity === '1'", "Fill first dot during final countdown")
-        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top + row.height / 2 - view.top - view.height / 2) < 4; })()", "Center the active pause indicator")
+        try await expect("(() => { const row = document.querySelector('.lyrics-pause.is-visible').getBoundingClientRect(); const view = document.querySelector('.lyrics-scroll').getBoundingClientRect(); return Math.abs(row.top - view.top - parseFloat(getComputedStyle(document.querySelector('.lyrics-lines')).paddingBlockStart)) < 4; })()", "Align the active pause indicator")
         try await snapshot("lyrics-pause-countdown")
         let stable = try await web.callAsyncJavaScript("""
             const scroll = document.querySelector('.lyrics-scroll');
@@ -1053,7 +1053,7 @@ setbuf(stdout, nil)
         return
     }
     if CommandLine.arguments.contains("--sync-controls-only") {
-        try await expect("!!document.querySelector('.lyrics-align') && lineIsCentered()", "Load centered lyrics before checking sync controls")
+        try await expect("!!document.querySelector('.lyrics-align') && lineIsAligned()", "Load aligned lyrics before checking sync controls")
         _ = try await js("""
             window.syncButtons = () => [...document.querySelectorAll('.lyrics-align')];
             window.syncHidden = () => syncButtons().every(button => getComputedStyle(button).opacity === '0'
@@ -1078,12 +1078,12 @@ setbuf(stdout, nil)
             fixtureTime = 70;
             document.querySelector('video').dispatchEvent(new Event('timeupdate')); null
             """)
-        try await Task.sleep(for: .milliseconds(2800))
+        try await Task.sleep(for: .milliseconds(1000))
         try await expect("""
             document.querySelector('.lyrics-line.is-current')?.textContent.startsWith('Line 7')
                 && document.querySelector('.lyrics-scroll').scrollTop === syncScrollTop
                 && syncButtons().every((button, index) => Math.abs(button.getBoundingClientRect().top - syncPositions[index]) < 1)
-            """, "A stationary pointer must keep sync targets still beyond the old idle timeout while playback highlights advance")
+            """, "A stationary pointer must keep sync targets still before the three-second idle timeout while playback highlights advance")
         try await expect("syncOnly(syncTarget)", "Hovering a lyric reveals only that row's sync button")
         try await expect("(() => { const alpha = parseFloat(getComputedStyle(syncTarget).color.split(',').at(-1)); return alpha >= .4 && alpha < .5; })()", "Row hover keeps the secondary sync action dim")
         _ = try await js("hoverSync(syncTarget, true); null")
@@ -1105,10 +1105,10 @@ setbuf(stdout, nil)
             document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerleave', {pointerType:'mouse'}));
             document.body.style.cssText = 'margin:24px;background:#030303;color:#fff;font:14px Arial,sans-serif'; null
             """)
-        try await expect("syncHidden() && lineIsCentered()", "Leaving the area hides every sync button")
+        try await expect("syncHidden() && lineIsAligned()", "Leaving the area hides every sync button")
         for width in [280, 520] {
             _ = try await js("document.querySelector('#tab-renderer').style.width = '\(width)px'; null")
-            try await expect("lineIsCentered()", "Center wrapped lyrics at \(width)px")
+            try await expect("lineIsAligned()", "Align wrapped lyrics at \(width)px")
             _ = try await js("window.syncTarget = document.querySelector('.lyrics-line.is-current .lyrics-align'); hoverSync(syncTarget); null")
             try await expect("""
                 syncOnly(syncTarget) && (() => {
@@ -1147,7 +1147,7 @@ setbuf(stdout, nil)
                 """)
             try await expect("syncOnly(syncTarget)", "Manual scrolling restores sync when its row returns to the clear area")
             _ = try await js("document.querySelector('.lyrics-scroll').dispatchEvent(new PointerEvent('pointerleave', {pointerType:'mouse'})); null")
-            try await expect("syncHidden() && lineIsCentered()", "Restore following after sync interaction at \(width)px")
+            try await expect("syncHidden() && lineIsAligned()", "Restore following after sync interaction at \(width)px")
             try await snapshot("sync-hidden-\(width)")
         }
         if (try await js("document.hasFocus()")) as? Bool == true {
@@ -1158,12 +1158,12 @@ setbuf(stdout, nil)
             try await Task.sleep(for: .milliseconds(500))
             try await expect("document.querySelector('.lyrics-scroll').scrollTop === syncScrollTop", "Keyboard sync focus also holds its target still")
             _ = try await js("document.activeElement.blur(); null")
-            try await expect("lineIsCentered() && syncHidden()", "Leaving keyboard sync focus restores following")
+            try await expect("lineIsAligned() && syncHidden()", "Leaving keyboard sync focus restores following")
             print("PASS: keyboard sync visibility and stable targets")
         } else {
             print("SKIP: keyboard focus checks require an active page; keeping the test window behind other apps")
         }
-        print("PASS: dim per-row sync, stationary hover without timeout, click-time alignment, edge hiding, smooth fades, fixed column and wrapping")
+        print("PASS: dim per-row sync, stationary hover before automatic resumption, click-time alignment, edge hiding, smooth fades, fixed column and wrapping")
         return
     }
     if CommandLine.arguments.contains("--align-ui-only") {
@@ -1239,7 +1239,7 @@ setbuf(stdout, nil)
                          "Keep the native loading spinner at its intrinsic size while looking up lyrics")
         try await snapshot("loading")
         try await expect("""
-            !document.querySelector('.lyrics-scroll').hidden && lineIsCentered()
+            !document.querySelector('.lyrics-scroll').hidden && lineIsAligned()
                 && document.querySelector('#tab-renderer').getAnimations().some(animation => animation.playState === 'running')
             """, "Position the active line before the lyrics fade in", seconds: 6)
         try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0", "Finish the lyric reveal")
@@ -1280,7 +1280,7 @@ setbuf(stdout, nil)
                          "Cancel a running fade without leaving another tab transparent")
         try await changeTrack("Recovered")
         _ = try await js("document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','true'); null")
-        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()",
+        try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsAligned()",
                          "Changing tracks and tabs must not reveal stale lyrics")
         try await expect("document.querySelector('#tab-renderer').getAnimations().length === 0", "Finish the last reveal before testing reduced motion")
         _ = try await js("""
@@ -1288,7 +1288,7 @@ setbuf(stdout, nil)
             window.reducedReveal = null;
             const revealObserver = new MutationObserver(() => {
                 if (!document.querySelector('.lyrics-scroll').hidden) {
-                    reducedReveal = lineIsCentered() && document.querySelector('#tab-renderer').getAnimations().length === 0;
+                    reducedReveal = lineIsAligned() && document.querySelector('#tab-renderer').getAnimations().length === 0;
                     revealObserver.disconnect();
                 }
             });
@@ -1296,7 +1296,7 @@ setbuf(stdout, nil)
             null
             """)
         try await changeTrack("Reduced motion feedback")
-        try await expect("reducedReveal === true", "Reduced Motion must reveal centered lyrics without a fade")
+        try await expect("reducedReveal === true", "Reduced Motion must reveal aligned lyrics without a fade")
         _ = try await js("fixtureReduceMotion = false; null")
         try await changeTrack("Occluded fade")
         try await expect(fadingOut, "Begin a transition before hiding the window")
@@ -1635,9 +1635,9 @@ setbuf(stdout, nil)
         """, "Lyrics must fill the panel and have one rounded scrollbar")
     _ = try await js("fixtureTime = 2; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'First line'", "Seeking backward must update the highlighted line")
-    try await expect("lineIsCentered()", "The first line needs empty space above it to remain centered")
+    try await expect("lineIsAligned()", "The first line needs empty space above it to remain aligned")
     _ = try await js("fixtureTime = 110; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
-    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 11' && lineIsCentered()", "The last line needs empty space below it to remain centered")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 11' && lineIsAligned()", "The last line needs empty space below it to remain aligned")
     try await expect("""
         (() => {
             const rows = document.querySelectorAll('.lyrics-line');
@@ -1648,7 +1648,7 @@ setbuf(stdout, nil)
         })()
         """, "The active line grows and every lyric line stays sharp, regardless of distance")
     window.setContentSize(NSSize(width: 400, height: 500))
-    try await expect("innerWidth === 400 && lineIsCentered() && document.querySelector('.lyrics-scroll').scrollWidth <= document.querySelector('.lyrics-scroll').clientWidth", "Wait for WebKit to resize before checking centering and wrapping")
+    try await expect("innerWidth === 400 && lineIsAligned() && document.querySelector('.lyrics-scroll').scrollWidth <= document.querySelector('.lyrics-scroll').clientWidth", "Wait for WebKit to resize before checking alignment and wrapping")
     _ = try await js("""
         window.beforeWeightChange = [...document.querySelectorAll('.lyrics-line')].map(row => row.offsetHeight);
         fixtureTime = 70;
@@ -1664,7 +1664,7 @@ setbuf(stdout, nil)
                 && rows.every((row, index) => row.offsetHeight === beforeWeightChange[index]);
         })()
         """, "All lyric lines stay bold, inactive lines dim, and wrapped lines keep their height")
-    try await expect("lineIsCentered()", "Resize and line motion keep the active lyric centered")
+    try await expect("lineIsAligned()", "Resize and line motion keep the active lyric aligned")
     window.setContentSize(NSSize(width: 900, height: 600))
     _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line'", "Seeking forward must update the highlighted line")
@@ -1735,7 +1735,7 @@ setbuf(stdout, nil)
         """)
     try await Task.sleep(for: .milliseconds(100))
     assert(lyrics.trackOffsets.isEmpty && defaults.object(forKey: offsetsKey) == nil, "Malformed offset messages must not create preference entries")
-    try await expect("lineIsCentered()", "Automatic scrolling must not pause itself")
+    try await expect("lineIsAligned()", "Automatic scrolling must not pause itself")
     _ = try await js("""
         const scroll = document.querySelector('.lyrics-scroll');
         scroll.dispatchEvent(new WheelEvent('wheel', {deltaY: 100}));
@@ -1745,7 +1745,7 @@ setbuf(stdout, nil)
         """)
     try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 6' && document.querySelector('.lyrics-scroll').scrollTop === 40", "Manual scrolling must pause auto-scroll while the highlight keeps following playback")
     _ = try await js("document.querySelectorAll('.lyrics-seek')[1].click(); null")
-    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()", "Clicking a line must resume centered scrolling immediately")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsAligned()", "Clicking a line must resume aligned scrolling immediately")
     _ = try await js("""
         window.beforeAnimatedSeek = document.querySelector('.lyrics-scroll').scrollTop;
         document.querySelectorAll('.lyrics-seek')[11].click();
@@ -1764,7 +1764,7 @@ setbuf(stdout, nil)
         document.querySelectorAll('.lyrics-seek')[5].click();
         document.querySelectorAll('.lyrics-seek')[1].click(); null
         """)
-    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsCentered()", "Rapid seek clicks must retarget from the current position and settle on the latest line")
+    try await expect("document.querySelector('.lyrics-line.is-current')?.textContent === 'Second line' && lineIsAligned()", "Rapid seek clicks must retarget from the current position and settle on the latest line")
     _ = try await js("""
         window.highlightsDuringScroll = [20, 30, 40].map((time, index) => {
             fixtureTime = time;
@@ -1775,20 +1775,20 @@ setbuf(stdout, nil)
         """)
     try await expect("highlightsDuringScroll.every(Boolean)", "The active lyric marker must follow the audio clock while scrolling")
     _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('seeked')); null")
-    try await expect("lineIsCentered()", "Following still settles after immediate highlight changes")
+    try await expect("lineIsAligned()", "Following still settles after immediate highlight changes")
     _ = try await js("""
         fixtureReduceMotion = true;
         document.querySelectorAll('.lyrics-seek')[11].click();
-        window.reducedMotionCenteredImmediately = lineIsCentered(); null
+        window.reducedMotionAlignedImmediately = lineIsAligned(); null
         """)
-    try await expect("reducedMotionCenteredImmediately", "Reduced Motion must center immediately without a lingering scroll animation")
+    try await expect("reducedMotionAlignedImmediately", "Reduced Motion must align immediately without a lingering scroll animation")
     _ = try await js("fixtureReduceMotion = false; document.querySelectorAll('.lyrics-seek')[1].click(); null")
-    try await expect("lineIsCentered()", "Restore animated following after Reduce Motion")
+    try await expect("lineIsAligned()", "Restore animated following after Reduce Motion")
     let requestCount = LyricsTransport.lock.withLock { LyricsTransport.requests.count }
     _ = try await js("document.querySelectorAll('.lyrics-seek')[11].click(); document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','false'); null")
     try await expect("getComputedStyle(document.querySelector('#native-lyrics')).display !== 'none'", "Restore native lyrics on other tabs")
     _ = try await js("document.querySelectorAll('[role=tab]')[1].setAttribute('aria-selected','true'); null")
-    try await expect("!!document.querySelector('.music-custom-lyrics-active') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 11' && lineIsCentered()", "Returning to Lyrics must finish centering an animation interrupted by hiding the panel")
+    try await expect("!!document.querySelector('.music-custom-lyrics-active') && document.querySelector('.lyrics-line.is-current')?.textContent === 'Line 11' && lineIsAligned()", "Returning to Lyrics must finish aligning an animation interrupted by hiding the panel")
     assert(LyricsTransport.lock.withLock { LyricsTransport.requests.count } == requestCount, "Reuse cache on tab return")
     _ = try await js("fixtureTime = 12; document.querySelector('video').dispatchEvent(new Event('timeupdate')); null")
     _ = try await js("document.querySelector('#music-custom-lyrics').remove(); null")
